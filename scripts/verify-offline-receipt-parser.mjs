@@ -31,13 +31,21 @@ console.log("== Home Depot style receipt (label + value same line) ==");
     "SUBTOTAL                47.75",
     "GST                      2.39",
     "TOTAL                   50.14",
-    "07/25/2026",
+    "25/07/2026",
   ].join("\n");
   const result = parseReceiptText(text);
   check("vendor name", result.vendorNameRaw === "THE HOME DEPOT", result.vendorNameRaw);
   check("net before GST (subtotal)", result.netBeforeGst === 47.75, result.netBeforeGst);
   check("gst", result.gst === 2.39, result.gst);
-  check("date (MM/DD/YYYY)", result.date === "2026-07-25", result.date);
+  check("date (D/M/Y)", result.date === "2026-07-25", result.date);
+}
+
+console.log("\n== Genuinely ambiguous numeric date defaults to day/month/year ==");
+{
+  // 03/04 could be read either way - receipts here are always D/M/Y, so
+  // this must resolve to April 3rd, NOT March 4th (the old month-first default).
+  const result = parseReceiptText("Some Store\n03/04/2026\nSubtotal 10.00");
+  check("03/04/2026 -> day-first (April 3, not March 4)", result.date === "2026-04-03", result.date);
 }
 
 console.log("\n== Split label/value across lines (common OCR column split) ==");

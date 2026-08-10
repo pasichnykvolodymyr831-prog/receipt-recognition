@@ -28,6 +28,16 @@ export function findMileageCategoryColumn(schema: CompanySchema): CompanySchema[
   return schema.categoryColumns.find((c) => /auto|travel/i.test(c.label)) ?? null;
 }
 
+/**
+ * A photographed receipt is overwhelmingly a materials/goods purchase, so
+ * for companies that have a "Materials" column it's a sensible pre-fill
+ * for the confirm screen's category picker - never auto-saved, always
+ * still an editable choice.
+ */
+export function findMaterialsCategoryKey(schema: CompanySchema): string {
+  return schema.categoryColumns.find((c) => /materials/i.test(c.label))?.key ?? "";
+}
+
 export class CapacityError extends Error {}
 
 export function writeCompanySheet(

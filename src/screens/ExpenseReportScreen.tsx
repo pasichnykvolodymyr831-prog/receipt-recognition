@@ -18,7 +18,7 @@ import { useAppSettingsContext } from "../context/AppSettingsContext";
 import { COMPANIES, type CompanyId } from "../config/companies";
 import { recognizeReceiptOffline } from "../services/ocr/offlineReceiptRecognizer";
 import { captureReceiptFromCamera, pickReceiptFromLibrary } from "../services/receipts/pickReceiptImage";
-import { findCompanySchema, findMileageCategoryColumn } from "../services/excel/expenseReportSheets";
+import { findCompanySchema, findMaterialsCategoryKey, findMileageCategoryColumn } from "../services/excel/expenseReportSheets";
 import { writeExpenseReportWorkingCopy } from "../services/excel/expenseReportWriter";
 import { getCurrentPeriod } from "../services/payroll/periodEngine";
 import { loadPeriodData, savePeriodData } from "../services/storage/periodDataRepository";
@@ -113,7 +113,10 @@ export default function ExpenseReportScreen() {
         notice: null,
         initial: {
           date: result.date ?? toIsoDate(new Date()),
-          categoryKey: "", // category is never guessed - always a required manual choice
+          // A photographed receipt is materials/goods, so if this company
+          // has a "Materials" column, start with it selected - still just
+          // a pre-fill, the user can tap a different category before saving.
+          categoryKey: findMaterialsCategoryKey(companySchema),
           netBeforeGst: result.netBeforeGst ?? 0,
           gst: result.gst ?? 0,
           // Description stays a required manual field, but the recognized

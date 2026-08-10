@@ -71,15 +71,13 @@ function extractDate(rawText: string): string | null {
   const numeric = /\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/.exec(rawText);
   if (numeric) {
     const year = normalizeYear(Number(numeric[3]));
-    let first = Number(numeric[1]);
-    let second = Number(numeric[2]);
-    // Unambiguous cases: whichever part is > 12 must be the day.
-    if (first > 12 && second <= 12) {
-      [first, second] = [second, first]; // -> month, day
-    }
-    const month = first;
-    const day = second;
-    if (isValidDate(year, month, day)) return `${year}-${pad2(month)}-${pad2(day)}`;
+    const first = Number(numeric[1]);
+    const second = Number(numeric[2]);
+    // Receipts here are always day/month/year - prefer that reading whenever
+    // it's valid, and only fall back to month/day/year when the second
+    // number can't possibly be a month (so the format must be M/D/Y).
+    if (isValidDate(year, second, first)) return `${year}-${pad2(second)}-${pad2(first)}`;
+    if (isValidDate(year, first, second)) return `${year}-${pad2(first)}-${pad2(second)}`;
   }
 
   const monthFirst = /\b([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{2,4})\b/.exec(rawText);

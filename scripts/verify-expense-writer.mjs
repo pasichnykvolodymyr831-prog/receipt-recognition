@@ -16,7 +16,12 @@ import { fileURLToPath } from "node:url";
 import JSZip from "jszip";
 import XLSX from "xlsx";
 import expenseSchema from "../src/assets/schema/expenseReport.json" with { type: "json" };
-import { writeCompanySheet, writeDrivingDetailsSheet, findMileageCategoryColumn } from "../src/services/excel/expenseReportSheets.ts";
+import {
+  writeCompanySheet,
+  writeDrivingDetailsSheet,
+  findMileageCategoryColumn,
+  findMaterialsCategoryKey,
+} from "../src/services/excel/expenseReportSheets.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
@@ -147,6 +152,43 @@ async function main() {
     check("schema resolved by internal sheet name, title mentions Bryco", schema.title.includes("Bryco"));
     const mileageCol = findMileageCategoryColumn(schema);
     check("Bryco's mileage column is Auto (C)", mileageCol && mileageCol.letter === "C", JSON.stringify(mileageCol));
+  }
+
+  console.log("\n== Materials category pre-fill + Net-before-GST duplicates the amount ==");
+  {
+    const schema = schemaFor("Truman Homes");
+    check("findMaterialsCategoryKey finds 'materials'", findMaterialsCategoryKey(schema) === "materials");
+
+    const sheetPath = await getSheetPath(zip, "Truman Homes");
+    let xml = await zip.file(sheetPath).async("text");
+    // Exactly the scanned-receipt flow: Subtotal recognized -> Materials,
+    // GST recognized -> GST, nothing else filled on this row.
+    xml = writeCompanySheet(xml, schema, employee, period, [
+      {
+        kind: "receipt",
+        date: "2026-07-28",
+        description: "Home Depot",
+        categoryKey: findMaterialsCategoryKey(schema),
+        netBeforeGst: 63.4,
+        gst: 3.17,
+      },
+    ]);
+    const outPath = path.join(OUT_DIR, "expense-materials-prefill.xlsx");
+    zip.file(sheetPath, xml);
+    fs.writeFileSync(outPath, await zip.generateAsync({ type: "nodebuffer" }));
+    const wb = XLSX.readFile(outPath, { cellFormula: true });
+    const ws = wb.Sheets["Truman Homes"];
+
+    check("amount written into Materials (D)", ws["D8"].v === 63.4, ws["D8"] && ws["D8"].v);
+    check(
+      "Net-before-GST (I) is a formula that duplicates the Materials amount when computed",
+      ws["I8"].f === "SUM(C8:H8)",
+      ws["I8"] && ws["I8"].f
+    );
+    // Simulate what Excel would actually compute: sum of the category
+    // range, which has only Materials filled - must equal that amount.
+    const categorySum = ["C8", "D8", "E8", "F8", "G8", "H8"].reduce((sum, ref) => sum + (ws[ref]?.v ?? 0), 0);
+    check("computed Net-before-GST equals the Materials amount", categorySum === 63.4, categorySum);
   }
 
   console.log("\n== Driving Details ==");
