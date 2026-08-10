@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import * as FileSystem from "expo-file-system";
+import { File } from "expo-file-system";
 
 /**
  * Wraps a single .xlsx (zip/OOXML) file loaded into memory, and exposes
@@ -18,14 +18,12 @@ export class XlsxDocument {
   }
 
   static async openFromUri(fileUri: string): Promise<XlsxDocument> {
-    const base64 = await FileSystem.readAsStringAsync(fileUri, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
-    return XlsxDocument.openFromBase64(base64);
+    const bytes = await new File(fileUri).bytes();
+    return XlsxDocument.openFromBytes(bytes);
   }
 
-  static async openFromBase64(base64: string): Promise<XlsxDocument> {
-    const zip = await JSZip.loadAsync(base64, { base64: true });
+  static async openFromBytes(bytes: Uint8Array): Promise<XlsxDocument> {
+    const zip = await JSZip.loadAsync(bytes);
     const sheetPathByName = await resolveSheetPaths(zip);
     return new XlsxDocument(zip, sheetPathByName);
   }
@@ -67,10 +65,10 @@ export class XlsxDocument {
       const path = this.requirePath(sheetName);
       this.zip.file(path, xml);
     }
-    const base64 = await this.zip.generateAsync({ type: "base64", compression: "DEFLATE" });
-    await FileSystem.writeAsStringAsync(destUri, base64, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
+    const bytes = await this.zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+    const file = new File(destUri);
+    file.create({ intermediates: true, overwrite: true });
+    file.write(bytes);
   }
 }
 

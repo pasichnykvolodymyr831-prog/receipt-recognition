@@ -1,0 +1,65 @@
+{
+  "nav": {
+    "home": "Главная",
+    "timesheet": "Табель",
+    "expenses": "Расходы",
+    "driving": "Поездки",
+    "settings": "Настройки"
+  },
+  "common": {
+    "save": "Сохранить",
+    "cancel": "Отмена",
+    "edit": "Редактировать",
+    "add": "Добавить",
+    "delete": "Удалить",
+    "loading": "Загрузка…",
+    "hours": "ч",
+    "minutes": "мин"
+  },
+  "home": {
+    "currentPeriod": "Текущий расчётный период",
+    "dueBy": "Сдать до",
+    "deadlineSoon": "Дедлайн сдачи приближается!",
+    "statHoliday": "Праздничный день"
+  },
+  "timesheet": {
+    "title": "Табель рабочего времени",
+    "employeeName": "ФИО сотрудника",
+    "employeePhone": "Телефон",
+    "payPeriod": "Расчётный период",
+    "columnDate": "Дата",
+    "columnStart": "Начало",
+    "columnLunch": "Обед",
+    "columnCoffee": "Перерыв",
+    "columnFinish": "Окончание",
+    "columnHours": "Часы",
+    "totalHours": "Всего часов",
+    "weekend": "Выходной",
+    "statHoliday": "Праздник",
+    "editRow": "Изменить строку",
+    "startTime": "Время начала",
+    "finishTime": "Время окончания",
+    "lunchBreakMinutes": "Обеденный перерыв (мин)",
+    "coffeeBreakMinutes": "Перерыв на кофе (мин)",
+    "clearRow": "Сделать пустой",
+    "savedIndicator": "Сохранено",
+    "generatingFile": "Формируем файл…",
+    "fillEmployeeInfoPrompt": "Укажите ФИО и телефон в Настройках, чтобы они попали в табель."
+  },
+  "settings": {
+    "title": "Настройки",
+    "language": "Язык интерфейса",
+    "languageRussian": "Русский",
+    "languageEnglish": "English",
+    "employeeSection": "Данные сотрудника",
+    "fullName": "ФИО",
+    "phone": "Номер телефона",
+    "fullNamePlaceholder": "Иванов Иван Иванович",
+    "phonePlaceholder": "+1 234 567 8900",
+    "saved": "Настройки сохранены"
+  },
+  "placeholders": {
+    "expenses": "Экран расходов появится на следующем этапе разработки.",
+    "driving": "Экран поездок появится на следующем этапе разработки."
+  }
+}

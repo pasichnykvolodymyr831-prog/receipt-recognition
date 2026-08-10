@@ -1,5 +1,8 @@
 import payrollSchedule from "../../assets/schema/payrollSchedule.json";
 import type { PayPeriod, TimesheetRowEntry } from "../../types/models";
+import { fromIsoDate, toIsoDate } from "../../utils/isoDate";
+
+export { fromIsoDate, toIsoDate };
 
 interface ScheduleEntry {
   startDate: string;
@@ -11,19 +14,6 @@ interface ScheduleEntry {
 
 const SCHEDULE: ScheduleEntry[] = payrollSchedule.periods;
 const SCHEDULE_BY_START = new Map(SCHEDULE.map((p) => [p.startDate, p]));
-
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-export function toIsoDate(date: Date): string {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-}
-
-export function fromIsoDate(iso: string): Date {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, m - 1, d);
-}
 
 /**
  * The company's fixed semi-monthly cycle, verified against every real row
