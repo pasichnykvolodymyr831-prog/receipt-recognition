@@ -1,0 +1,23 @@
+{
+  "sourceFile": "Volodymyr Payroll Timesheet.xlsx",
+  "sheetName": "Sheet1",
+  "titleCell": "A1",
+  "employeeNameCell": "C2",
+  "payPeriodCell": "C5",
+  "employeePhoneCell": "C6",
+  "headerRow": 7,
+  "columns": {
+    "itemNumber": "A",
+    "date": "B",
+    "startTime": "C",
+    "lunchBreak": "D",
+    "coffeeBreak": "E",
+    "finishTime": "F",
+    "hours": "G",
+    "total": "H"
+  },
+  "dataRowStart": 8,
+  "dataRowEnd": 38,
+  "totalHoursLabelCell": "G39",
+  "totalHoursValueCell": "H39"
+}

@@ -1,0 +1,14 @@
+{
+  "sourceFile": "Mileage Report - Volodymyr.xlsx",
+  "sheetName": "Driving Details",
+  "columns": {
+    "date": "A",
+    "trip": "B",
+    "km": "C",
+    "totalDollars": "D"
+  },
+  "dataRowStart": 2,
+  "dataRowEnd": 18,
+  "totalRow": 19,
+  "kmPerDollarRate": 0.56
+}

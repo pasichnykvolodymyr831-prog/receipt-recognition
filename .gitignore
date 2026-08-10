@@ -38,6 +38,9 @@ yarn-error.*
 # builds (see .easignore, which deliberately does NOT exclude this).
 /templates/
 
+# scratch output from scripts/verify-excel-roundtrip.mjs
+/tmp-verify/
+
 # typescript
 *.tsbuildinfo
 

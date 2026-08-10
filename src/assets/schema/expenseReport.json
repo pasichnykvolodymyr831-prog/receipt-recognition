@@ -1,0 +1,280 @@
+{
+  "sourceFile": "Mileage Report - Volodymyr.xlsx",
+  "sheetOrder": [
+    "Truman Dev",
+    "Truman Homes",
+    "Driving Details",
+    "Lionsworthe",
+    "Taphouse",
+    "Metro",
+    "Sheet1"
+  ],
+  "companies": [
+    {
+      "sheetName": "Truman Dev",
+      "title": "EXPENSE REPORT Truman Development Corp",
+      "dateColumn": "A",
+      "descriptionColumn": "B",
+      "categoryColumns": [
+        {
+          "letter": "C",
+          "label": "Office",
+          "key": "office"
+        },
+        {
+          "letter": "D",
+          "label": "Trucking",
+          "key": "trucking"
+        },
+        {
+          "letter": "E",
+          "label": "Auto",
+          "key": "auto"
+        },
+        {
+          "letter": "F",
+          "label": "Phone",
+          "key": "phone"
+        },
+        {
+          "letter": "G",
+          "label": "Meals",
+          "key": "meals"
+        },
+        {
+          "letter": "H",
+          "label": "Due, Fees Memberships",
+          "key": "due_fees_memberships"
+        }
+      ],
+      "netBeforeGstColumn": "I",
+      "gstColumn": "K",
+      "totalColumn": "L",
+      "headerRow6": 6,
+      "dataRowStart": 8,
+      "dataRowEnd": 27,
+      "subtotalRow": 28,
+      "totalClaimedRow": 31
+    },
+    {
+      "sheetName": "Truman Homes",
+      "title": "EXPENSE REPORT Truman Homes 1995 Inc",
+      "dateColumn": "A",
+      "descriptionColumn": "B",
+      "categoryColumns": [
+        {
+          "letter": "C",
+          "label": "Office",
+          "key": "office"
+        },
+        {
+          "letter": "D",
+          "label": "Materials",
+          "key": "materials"
+        },
+        {
+          "letter": "E",
+          "label": "Travel",
+          "key": "travel"
+        },
+        {
+          "letter": "F",
+          "label": "Phone",
+          "key": "phone"
+        },
+        {
+          "letter": "G",
+          "label": "Meals",
+          "key": "meals"
+        },
+        {
+          "letter": "H",
+          "label": "Showhome",
+          "key": "showhome"
+        }
+      ],
+      "netBeforeGstColumn": "I",
+      "gstColumn": "K",
+      "totalColumn": "L",
+      "headerRow6": 6,
+      "dataRowStart": 8,
+      "dataRowEnd": 27,
+      "subtotalRow": 28,
+      "totalClaimedRow": 31
+    },
+    {
+      "sheetName": "Lionsworthe",
+      "title": "EXPENSE REPORT Lionsworthe Homes Inc",
+      "dateColumn": "A",
+      "descriptionColumn": "B",
+      "categoryColumns": [
+        {
+          "letter": "C",
+          "label": "Office",
+          "key": "office"
+        },
+        {
+          "letter": "D",
+          "label": "Materials",
+          "key": "materials"
+        },
+        {
+          "letter": "E",
+          "label": "Auto",
+          "key": "auto"
+        },
+        {
+          "letter": "F",
+          "label": "Phone",
+          "key": "phone"
+        },
+        {
+          "letter": "G",
+          "label": "Meals",
+          "key": "meals"
+        },
+        {
+          "letter": "H",
+          "label": "Showhome",
+          "key": "showhome"
+        }
+      ],
+      "netBeforeGstColumn": "I",
+      "gstColumn": "K",
+      "totalColumn": "L",
+      "headerRow6": 6,
+      "dataRowStart": 8,
+      "dataRowEnd": 27,
+      "subtotalRow": 28,
+      "totalClaimedRow": 31
+    },
+    {
+      "sheetName": "Taphouse",
+      "title": "EXPENSE REPORT North Tap House Chestermere",
+      "dateColumn": "A",
+      "descriptionColumn": "B",
+      "categoryColumns": [
+        {
+          "letter": "C",
+          "label": "Office",
+          "key": "office"
+        },
+        {
+          "letter": "D",
+          "label": "Materials",
+          "key": "materials"
+        },
+        {
+          "letter": "E",
+          "label": "Food",
+          "key": "food"
+        },
+        {
+          "letter": "F",
+          "label": "Bar",
+          "key": "bar"
+        },
+        {
+          "letter": "G",
+          "label": "Restaurant Supplies",
+          "key": "restaurant_supplies"
+        }
+      ],
+      "netBeforeGstColumn": "I",
+      "gstColumn": "K",
+      "totalColumn": "L",
+      "headerRow6": 6,
+      "dataRowStart": 8,
+      "dataRowEnd": 27,
+      "subtotalRow": 28,
+      "totalClaimedRow": 31
+    },
+    {
+      "sheetName": "Metro",
+      "title": "EXPENSE REPORT Metro Liquor Store",
+      "dateColumn": "A",
+      "descriptionColumn": "B",
+      "categoryColumns": [
+        {
+          "letter": "C",
+          "label": "Office",
+          "key": "office"
+        },
+        {
+          "letter": "D",
+          "label": "Supplies",
+          "key": "supplies"
+        },
+        {
+          "letter": "E",
+          "label": "Liquor Purchase",
+          "key": "liquor_purchase"
+        },
+        {
+          "letter": "F",
+          "label": "Bar",
+          "key": "bar"
+        },
+        {
+          "letter": "G",
+          "label": "Capital Asset",
+          "key": "capital_asset"
+        }
+      ],
+      "netBeforeGstColumn": "I",
+      "gstColumn": "K",
+      "totalColumn": "L",
+      "headerRow6": 6,
+      "dataRowStart": 8,
+      "dataRowEnd": 27,
+      "subtotalRow": 28,
+      "totalClaimedRow": 31
+    },
+    {
+      "sheetName": "Sheet1",
+      "title": "EXPENSE REPORT Bryco Dirtworks Inc",
+      "dateColumn": "A",
+      "descriptionColumn": "B",
+      "categoryColumns": [
+        {
+          "letter": "C",
+          "label": "Auto",
+          "key": "auto"
+        },
+        {
+          "letter": "D",
+          "label": "R & M Machine",
+          "key": "r_m_machine"
+        },
+        {
+          "letter": "E",
+          "label": "Adv",
+          "key": "adv"
+        },
+        {
+          "letter": "F",
+          "label": "Phone",
+          "key": "phone"
+        },
+        {
+          "letter": "G",
+          "label": "office",
+          "key": "office"
+        },
+        {
+          "letter": "H",
+          "label": "Meals",
+          "key": "meals"
+        }
+      ],
+      "netBeforeGstColumn": "I",
+      "gstColumn": "K",
+      "totalColumn": "L",
+      "headerRow6": 6,
+      "dataRowStart": 8,
+      "dataRowEnd": 27,
+      "subtotalRow": 28,
+      "totalClaimedRow": 31
+    }
+  ]
+}
