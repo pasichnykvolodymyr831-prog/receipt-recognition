@@ -56,10 +56,46 @@
     "phone": "Номер телефона",
     "fullNamePlaceholder": "Иванов Иван Иванович",
     "phonePlaceholder": "+1 234 567 8900",
-    "saved": "Настройки сохранены"
+    "saved": "Настройки сохранены",
+    "apiKeySection": "Распознавание чеков",
+    "apiKeyLabel": "API-ключ Claude",
+    "apiKeyPlaceholder": "sk-ant-...",
+    "apiKeyHint": "Получите ключ на console.anthropic.com и вставьте сюда. Без ключа распознавание чеков недоступно — данные можно будет вводить вручную.",
+    "apiKeySave": "Сохранить ключ",
+    "apiKeySaved": "Ключ сохранён"
   },
   "placeholders": {
-    "expenses": "Экран расходов появится на следующем этапе разработки.",
     "driving": "Экран поездок появится на следующем этапе разработки."
+  },
+  "expenses": {
+    "title": "Расходы",
+    "company": "Компания",
+    "addFromCamera": "Сфотографировать чек",
+    "addFromGallery": "Выбрать из галереи",
+    "addManually": "Ввести вручную",
+    "addKilometers": "Добавить километраж",
+    "noEntries": "Пока нет записей за этот период",
+    "generateFile": "Сформировать Excel-файл",
+    "generatingFile": "Формируем файл…",
+    "entryDate": "Дата",
+    "entryCategory": "Категория",
+    "entryDescription": "Описание",
+    "entryDescriptionPlaceholder": "Опишите покупку",
+    "entryDescriptionRequired": "Заполните описание",
+    "entryNetBeforeGst": "Сумма без налога",
+    "entryGst": "Налог (GST)",
+    "confirmTitle": "Проверьте распознанные данные",
+    "manualTitle": "Новая запись",
+    "ocrFailedNotice": "Не удалось распознать чек. Введите данные вручную.",
+    "noApiKeyNotice": "API-ключ не настроен (см. Настройки). Введите данные вручную.",
+    "networkErrorNotice": "Нет подключения к интернету. Введите данные вручную.",
+    "recognizing": "Распознаём чек…",
+    "kilometersTitle": "Километраж",
+    "kilometersCount": "Количество километров",
+    "kilometersDate": "Дата поездки",
+    "kilometersAmount": "Сумма",
+    "kilometersNoColumn": "У этой компании нет колонки для километража (Auto/Travel). Выберите другую компанию.",
+    "capacityFull": "В этом периоде для выбранной компании больше нет свободных строк.",
+    "deleteEntryConfirm": "Удалить эту запись?"
   }
 }

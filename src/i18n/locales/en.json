@@ -56,10 +56,46 @@
     "phone": "Phone number",
     "fullNamePlaceholder": "John Smith",
     "phonePlaceholder": "+1 234 567 8900",
-    "saved": "Settings saved"
+    "saved": "Settings saved",
+    "apiKeySection": "Receipt recognition",
+    "apiKeyLabel": "Claude API key",
+    "apiKeyPlaceholder": "sk-ant-...",
+    "apiKeyHint": "Get a key at console.anthropic.com and paste it here. Without a key, receipts can still be entered manually.",
+    "apiKeySave": "Save key",
+    "apiKeySaved": "Key saved"
   },
   "placeholders": {
-    "expenses": "The Expenses screen will be built in a later phase.",
     "driving": "The Driving screen will be built in a later phase."
+  },
+  "expenses": {
+    "title": "Expenses",
+    "company": "Company",
+    "addFromCamera": "Photograph receipt",
+    "addFromGallery": "Choose from gallery",
+    "addManually": "Enter manually",
+    "addKilometers": "Add mileage",
+    "noEntries": "No entries yet for this period",
+    "generateFile": "Generate Excel file",
+    "generatingFile": "Generating file…",
+    "entryDate": "Date",
+    "entryCategory": "Category",
+    "entryDescription": "Description",
+    "entryDescriptionPlaceholder": "Describe the purchase",
+    "entryDescriptionRequired": "Fill in a description",
+    "entryNetBeforeGst": "Amount before tax",
+    "entryGst": "Tax (GST)",
+    "confirmTitle": "Check the recognized data",
+    "manualTitle": "New entry",
+    "ocrFailedNotice": "Couldn't recognize the receipt. Enter the data manually.",
+    "noApiKeyNotice": "No API key configured (see Settings). Enter the data manually.",
+    "networkErrorNotice": "No internet connection. Enter the data manually.",
+    "recognizing": "Recognizing receipt…",
+    "kilometersTitle": "Mileage",
+    "kilometersCount": "Number of kilometers",
+    "kilometersDate": "Trip date",
+    "kilometersAmount": "Amount",
+    "kilometersNoColumn": "This company has no Auto/Travel column for mileage. Choose a different company.",
+    "capacityFull": "There's no room left this period for the selected company.",
+    "deleteEntryConfirm": "Delete this entry?"
   }
 }
