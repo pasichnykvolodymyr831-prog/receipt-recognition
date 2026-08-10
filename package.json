@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "tsx": "^4.23.11",
     "typescript": "~6.0.3",
     "xlsx": "^0.18.5"
   },
@@ -34,7 +35,9 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "extract-schema": "node scripts/extract-schema.js",
-    "verify-excel-roundtrip": "node --experimental-strip-types scripts/verify-excel-roundtrip.mjs"
+    "extract-payroll-schedule": "node scripts/extract-payroll-schedule.js",
+    "verify-excel-roundtrip": "tsx scripts/verify-excel-roundtrip.mjs",
+    "verify-period-engine": "tsx scripts/verify-period-engine.mjs"
   },
   "private": true
 }
