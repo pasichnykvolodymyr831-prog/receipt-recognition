@@ -47,7 +47,8 @@
       ],
       "expo-localization",
       "expo-asset",
-      "expo-dev-client"
+      "expo-dev-client",
+      "expo-font"
     ],
     "extra": {
       "eas": {
