@@ -41,7 +41,9 @@
     "extract-schema": "node scripts/extract-schema.js",
     "extract-payroll-schedule": "node scripts/extract-payroll-schedule.js",
     "verify-excel-roundtrip": "tsx scripts/verify-excel-roundtrip.mjs",
-    "verify-period-engine": "tsx scripts/verify-period-engine.mjs"
+    "verify-period-engine": "tsx scripts/verify-period-engine.mjs",
+    "verify-expense-writer": "tsx scripts/verify-expense-writer.mjs",
+    "verify-timesheet-writer": "tsx scripts/verify-timesheet-writer.mjs"
   },
   "private": true
 }
