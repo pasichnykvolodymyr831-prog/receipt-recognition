@@ -1,0 +1,19 @@
+# EAS Build upload ignore list.
+# Deliberately does NOT list templates/ - .gitignore hides it from GitHub
+# (it has real personal/employer data), but EAS Build still needs it
+# bundled as an app asset, so we override the default (which would
+# otherwise fall back to .gitignore and exclude it).
+
+node_modules/
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+.kotlin/
+*.orig.*
+.metro-health-check*
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.DS_Store
+.git/

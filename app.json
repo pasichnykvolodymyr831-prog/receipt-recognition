@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "Receipt Scanner",
+    "slug": "receipt-recognition",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "receiptscanner",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.pasichnyk.receiptscanner",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Камера нужна, чтобы фотографировать чеки для распознавания.",
+        "NSPhotoLibraryUsageDescription": "Доступ к галерее нужен, чтобы выбрать фото чека."
+      }
+    },
+    "android": {
+      "package": "com.pasichnyk.receiptscanner",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Камера нужна, чтобы фотографировать чеки для распознавания."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Доступ к галерее нужен, чтобы выбрать фото чека."
+        }
+      ],
+      "expo-secure-store",
+      "expo-sharing",
+      "expo-localization"
+    ]
+  }
+}
