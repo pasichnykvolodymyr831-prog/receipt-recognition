@@ -89,7 +89,6 @@ export default function ExpenseReportScreen() {
       notice,
       initial: {
         date: toIsoDate(new Date()),
-        categoryKey: "", // category is never guessed - always a required manual choice
         netBeforeGst: 0,
         gst: 0,
         description: "",
@@ -113,10 +112,6 @@ export default function ExpenseReportScreen() {
         notice: null,
         initial: {
           date: result.date ?? toIsoDate(new Date()),
-          // A photographed receipt is materials/goods, so if this company
-          // has a "Materials" column, start with it selected - still just
-          // a pre-fill, the user can tap a different category before saving.
-          categoryKey: findMaterialsCategoryKey(companySchema),
           netBeforeGst: result.netBeforeGst ?? 0,
           gst: result.gst ?? 0,
           // Description stays a required manual field, but the recognized
@@ -142,14 +137,17 @@ export default function ExpenseReportScreen() {
   };
 
   const saveEntry = (values: ExpenseEntryValues) => {
-    if (!entries || !companyId) return;
+    if (!entries || !companyId || !companySchema) return;
+    // Category is never a user choice: every receipt goes to "Materials"
+    // for companies that have that column, or the first category otherwise.
+    const categoryKey = findMaterialsCategoryKey(companySchema) || companySchema.categoryColumns[0]?.key || "";
     const entry: ExpenseEntry = {
       kind: "receipt",
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       companyId,
       date: values.date,
       description: values.description,
-      categoryKey: values.categoryKey,
+      categoryKey,
       netBeforeGst: values.netBeforeGst,
       gst: values.gst,
       createdAt: new Date().toISOString(),
@@ -269,7 +267,6 @@ export default function ExpenseReportScreen() {
       {modal.kind === "entry" && (
         <ExpenseEntryModal
           visible
-          companySchema={companySchema}
           initialValues={modal.initial}
           startInEditMode={modal.startInEditMode}
           notice={modal.notice}

@@ -1,11 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
-import type { CompanySchema } from "../services/excel/expenseReportSheets";
 
 export interface ExpenseEntryValues {
   date: string; // ISO yyyy-mm-dd
-  categoryKey: string;
   netBeforeGst: number;
   gst: number;
   description: string;
@@ -13,7 +11,6 @@ export interface ExpenseEntryValues {
 
 interface Props {
   visible: boolean;
-  companySchema: CompanySchema;
   initialValues: ExpenseEntryValues;
   startInEditMode: boolean;
   notice?: string | null;
@@ -21,19 +18,17 @@ interface Props {
   onSave: (values: ExpenseEntryValues) => void;
 }
 
-export default function ExpenseEntryModal({
-  visible,
-  companySchema,
-  initialValues,
-  startInEditMode,
-  notice,
-  onCancel,
-  onSave,
-}: Props) {
+/**
+ * Shows the 3 recognized fields (date / amount before tax / GST) - always
+ * mapped to Date, Materials, and GST respectively; there is no category
+ * choice here at all (see findMaterialsCategoryKey in
+ * expenseReportSheets.ts for how the destination column is picked).
+ * Description is always a required manual field.
+ */
+export default function ExpenseEntryModal({ visible, initialValues, startInEditMode, notice, onCancel, onSave }: Props) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(startInEditMode);
   const [date, setDate] = useState(initialValues.date);
-  const [categoryKey, setCategoryKey] = useState(initialValues.categoryKey);
   const [netBeforeGst, setNetBeforeGst] = useState(String(initialValues.netBeforeGst));
   const [gst, setGst] = useState(String(initialValues.gst));
   const [description, setDescription] = useState(initialValues.description);
@@ -42,18 +37,16 @@ export default function ExpenseEntryModal({
     if (!visible) return;
     setEditing(startInEditMode);
     setDate(initialValues.date);
-    setCategoryKey(initialValues.categoryKey);
     setNetBeforeGst(String(initialValues.netBeforeGst));
     setGst(String(initialValues.gst));
     setDescription(initialValues.description);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  const canSave = description.trim().length > 0 && categoryKey.length > 0;
+  const canSave = description.trim().length > 0;
 
   const buildValues = (): ExpenseEntryValues => ({
     date,
-    categoryKey,
     netBeforeGst: Number(netBeforeGst) || 0,
     gst: Number(gst) || 0,
     description: description.trim(),
@@ -73,20 +66,6 @@ export default function ExpenseEntryModal({
             ) : (
               <Text style={styles.readValue}>{date}</Text>
             )}
-
-            <Text style={styles.fieldLabel}>{t("expenses.entryCategory")}</Text>
-            <View style={styles.chipRow}>
-              {companySchema.categoryColumns.map((c) => (
-                <TouchableOpacity
-                  key={c.key}
-                  style={[styles.chip, c.key === categoryKey && styles.chipActive]}
-                  onPress={() => setCategoryKey(c.key)}
-                >
-                  <Text style={[styles.chipText, c.key === categoryKey && styles.chipTextActive]}>{c.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            {!categoryKey && <Text style={styles.requiredHint}>{t("expenses.entryCategoryRequired")}</Text>}
 
             <Text style={styles.fieldLabel}>{t("expenses.entryNetBeforeGst")}</Text>
             {editing ? (
@@ -157,18 +136,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   requiredHint: { fontSize: 12, color: "#c0392b", marginTop: 4 },
-  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#d0d0d0",
-    backgroundColor: "#f7f7f7",
-  },
-  chipActive: { backgroundColor: "#2f6fed", borderColor: "#2f6fed" },
-  chipText: { fontSize: 13, color: "#333" },
-  chipTextActive: { color: "#fff", fontWeight: "600" },
   actions: { flexDirection: "row", gap: 8, marginTop: 20, justifyContent: "flex-end" },
   secondaryButton: { paddingVertical: 10, paddingHorizontal: 14 },
   secondaryButtonText: { color: "#666", fontSize: 14 },
