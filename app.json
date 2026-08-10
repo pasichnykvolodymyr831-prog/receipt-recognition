@@ -42,10 +42,8 @@
         }
       ],
       "expo-secure-store",
-      "expo-sharing",
       "expo-localization",
-      "expo-asset",
-      "expo-status-bar"
+      "expo-asset"
     ]
   }
 }
