@@ -49,12 +49,11 @@ export default function ExpenseEntryModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  const category = companySchema.categoryColumns.find((c) => c.key === categoryKey) ?? companySchema.categoryColumns[0];
-  const canSave = description.trim().length > 0;
+  const canSave = description.trim().length > 0 && categoryKey.length > 0;
 
   const buildValues = (): ExpenseEntryValues => ({
     date,
-    categoryKey: category?.key ?? "",
+    categoryKey,
     netBeforeGst: Number(netBeforeGst) || 0,
     gst: Number(gst) || 0,
     description: description.trim(),
@@ -76,21 +75,18 @@ export default function ExpenseEntryModal({
             )}
 
             <Text style={styles.fieldLabel}>{t("expenses.entryCategory")}</Text>
-            {editing ? (
-              <View style={styles.chipRow}>
-                {companySchema.categoryColumns.map((c) => (
-                  <TouchableOpacity
-                    key={c.key}
-                    style={[styles.chip, c.key === categoryKey && styles.chipActive]}
-                    onPress={() => setCategoryKey(c.key)}
-                  >
-                    <Text style={[styles.chipText, c.key === categoryKey && styles.chipTextActive]}>{c.label}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            ) : (
-              <Text style={styles.readValue}>{category?.label}</Text>
-            )}
+            <View style={styles.chipRow}>
+              {companySchema.categoryColumns.map((c) => (
+                <TouchableOpacity
+                  key={c.key}
+                  style={[styles.chip, c.key === categoryKey && styles.chipActive]}
+                  onPress={() => setCategoryKey(c.key)}
+                >
+                  <Text style={[styles.chipText, c.key === categoryKey && styles.chipTextActive]}>{c.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {!categoryKey && <Text style={styles.requiredHint}>{t("expenses.entryCategoryRequired")}</Text>}
 
             <Text style={styles.fieldLabel}>{t("expenses.entryNetBeforeGst")}</Text>
             {editing ? (

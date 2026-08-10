@@ -16,13 +16,12 @@ import ExpenseEntryModal, { type ExpenseEntryValues } from "../components/Expens
 import KilometersModal from "../components/KilometersModal";
 import { useAppSettingsContext } from "../context/AppSettingsContext";
 import { COMPANIES, type CompanyId } from "../config/companies";
-import { OcrError, recognizeReceipt } from "../services/ocr/claudeVisionClient";
+import { recognizeReceiptOffline } from "../services/ocr/offlineReceiptRecognizer";
 import { captureReceiptFromCamera, pickReceiptFromLibrary } from "../services/receipts/pickReceiptImage";
 import { findCompanySchema, findMileageCategoryColumn } from "../services/excel/expenseReportSheets";
 import { writeExpenseReportWorkingCopy } from "../services/excel/expenseReportWriter";
 import { getCurrentPeriod } from "../services/payroll/periodEngine";
 import { loadPeriodData, savePeriodData } from "../services/storage/periodDataRepository";
-import { loadApiKey } from "../services/storage/settingsRepository";
 import type { ExpenseEntry, PayPeriod } from "../types/models";
 import { toIsoDate } from "../utils/isoDate";
 
@@ -90,7 +89,7 @@ export default function ExpenseReportScreen() {
       notice,
       initial: {
         date: toIsoDate(new Date()),
-        categoryKey: companySchema.categoryColumns[0]?.key ?? "",
+        categoryKey: "", // category is never guessed - always a required manual choice
         netBeforeGst: 0,
         gst: 0,
         description: "",
@@ -98,65 +97,45 @@ export default function ExpenseReportScreen() {
     });
   };
 
-  const matchCategoryKey = (suggestedLabel: string | null): string => {
-    const categories = companySchema!.categoryColumns;
-    if (suggestedLabel) {
-      const exact = categories.find((c) => c.label.toLowerCase() === suggestedLabel.toLowerCase());
-      if (exact) return exact.key;
-      const partial = categories.find(
-        (c) => c.label.toLowerCase().includes(suggestedLabel.toLowerCase()) || suggestedLabel.toLowerCase().includes(c.label.toLowerCase())
-      );
-      if (partial) return partial.key;
-    }
-    return categories[0]?.key ?? "";
-  };
-
-  const runOcr = async (image: { base64: string; mediaType: string }) => {
+  const runOcr = async (imageUri: string) => {
     if (!companySchema) return;
-    const apiKey = await loadApiKey();
-    if (!apiKey) {
-      openManualEntry(t("expenses.noApiKeyNotice"));
-      return;
-    }
-
     setOcrLoading(true);
     try {
-      const result = await recognizeReceipt({
-        apiKey,
-        imageBase64: image.base64,
-        mediaType: image.mediaType,
-        categoryLabels: companySchema.categoryColumns.map((c) => c.label),
-      });
-      const validDate = result.date && /^\d{4}-\d{2}-\d{2}$/.test(result.date) ? result.date : toIsoDate(new Date());
+      const result = await recognizeReceiptOffline(imageUri);
+      const nothingRecognized = !result.date && result.netBeforeGst === null && result.gst === null && !result.vendorNameRaw;
+      if (nothingRecognized) {
+        openManualEntry(t("expenses.ocrFailedNotice"));
+        return;
+      }
       setModal({
         kind: "entry",
         startInEditMode: false,
         notice: null,
         initial: {
-          date: validDate,
-          categoryKey: matchCategoryKey(result.suggestedCategoryLabel),
+          date: result.date ?? toIsoDate(new Date()),
+          categoryKey: "", // category is never guessed - always a required manual choice
           netBeforeGst: result.netBeforeGst ?? 0,
           gst: result.gst ?? 0,
-          description: "",
+          // Description stays a required manual field, but the recognized
+          // vendor name is a reasonable starting point the user can edit.
+          description: result.vendorNameRaw ?? "",
         },
       });
-    } catch (err) {
-      const notice =
-        err instanceof OcrError && err.reason === "network" ? t("expenses.networkErrorNotice") : t("expenses.ocrFailedNotice");
-      openManualEntry(notice);
+    } catch {
+      openManualEntry(t("expenses.ocrFailedNotice"));
     } finally {
       setOcrLoading(false);
     }
   };
 
   const handleCamera = async () => {
-    const image = await captureReceiptFromCamera();
-    if (image) await runOcr(image);
+    const uri = await captureReceiptFromCamera();
+    if (uri) await runOcr(uri);
   };
 
   const handleGallery = async () => {
-    const image = await pickReceiptFromLibrary();
-    if (image) await runOcr(image);
+    const uri = await pickReceiptFromLibrary();
+    if (uri) await runOcr(uri);
   };
 
   const saveEntry = (values: ExpenseEntryValues) => {

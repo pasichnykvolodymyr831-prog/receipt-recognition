@@ -3,10 +3,6 @@ export const STORAGE_KEYS = {
   periodDataPrefix: "period-data/v1/", // + periodKey (startDate)
 } as const;
 
-export const SECURE_STORE_KEYS = {
-  anthropicApiKey: "anthropic-api-key",
-} as const;
-
 export function periodDataKey(periodKey: string): string {
   return `${STORAGE_KEYS.periodDataPrefix}${periodKey}`;
 }

@@ -56,13 +56,7 @@
     "phone": "Номер телефона",
     "fullNamePlaceholder": "Иванов Иван Иванович",
     "phonePlaceholder": "+1 234 567 8900",
-    "saved": "Настройки сохранены",
-    "apiKeySection": "Распознавание чеков",
-    "apiKeyLabel": "API-ключ Claude",
-    "apiKeyPlaceholder": "sk-ant-...",
-    "apiKeyHint": "Получите ключ на console.anthropic.com и вставьте сюда. Без ключа распознавание чеков недоступно — данные можно будет вводить вручную.",
-    "apiKeySave": "Сохранить ключ",
-    "apiKeySaved": "Ключ сохранён"
+    "saved": "Настройки сохранены"
   },
   "placeholders": {
     "driving": "Экран поездок появится на следующем этапе разработки."
@@ -82,14 +76,13 @@
     "entryDescription": "Описание",
     "entryDescriptionPlaceholder": "Опишите покупку",
     "entryDescriptionRequired": "Заполните описание",
+    "entryCategoryRequired": "Выберите категорию",
     "entryNetBeforeGst": "Сумма без налога",
     "entryGst": "Налог (GST)",
     "confirmTitle": "Проверьте распознанные данные",
     "manualTitle": "Новая запись",
-    "ocrFailedNotice": "Не удалось распознать чек. Введите данные вручную.",
-    "noApiKeyNotice": "API-ключ не настроен (см. Настройки). Введите данные вручную.",
-    "networkErrorNotice": "Нет подключения к интернету. Введите данные вручную.",
-    "recognizing": "Распознаём чек…",
+    "ocrFailedNotice": "Не удалось распознать чек (проверьте освещение и резкость фото). Введите данные вручную.",
+    "recognizing": "Распознаём чек на устройстве…",
     "kilometersTitle": "Километраж",
     "kilometersCount": "Количество километров",
     "kilometersDate": "Дата поездки",

@@ -56,13 +56,7 @@
     "phone": "Phone number",
     "fullNamePlaceholder": "John Smith",
     "phonePlaceholder": "+1 234 567 8900",
-    "saved": "Settings saved",
-    "apiKeySection": "Receipt recognition",
-    "apiKeyLabel": "Claude API key",
-    "apiKeyPlaceholder": "sk-ant-...",
-    "apiKeyHint": "Get a key at console.anthropic.com and paste it here. Without a key, receipts can still be entered manually.",
-    "apiKeySave": "Save key",
-    "apiKeySaved": "Key saved"
+    "saved": "Settings saved"
   },
   "placeholders": {
     "driving": "The Driving screen will be built in a later phase."
@@ -82,14 +76,13 @@
     "entryDescription": "Description",
     "entryDescriptionPlaceholder": "Describe the purchase",
     "entryDescriptionRequired": "Fill in a description",
+    "entryCategoryRequired": "Choose a category",
     "entryNetBeforeGst": "Amount before tax",
     "entryGst": "Tax (GST)",
     "confirmTitle": "Check the recognized data",
     "manualTitle": "New entry",
-    "ocrFailedNotice": "Couldn't recognize the receipt. Enter the data manually.",
-    "noApiKeyNotice": "No API key configured (see Settings). Enter the data manually.",
-    "networkErrorNotice": "No internet connection. Enter the data manually.",
-    "recognizing": "Recognizing receipt…",
+    "ocrFailedNotice": "Couldn't recognize the receipt (check lighting and focus). Enter the data manually.",
+    "recognizing": "Recognizing receipt on-device…",
     "kilometersTitle": "Mileage",
     "kilometersCount": "Number of kilometers",
     "kilometersDate": "Trip date",

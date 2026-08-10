@@ -41,9 +41,9 @@
           "photosPermission": "Доступ к галерее нужен, чтобы выбрать фото чека."
         }
       ],
-      "expo-secure-store",
       "expo-localization",
-      "expo-asset"
+      "expo-asset",
+      "expo-dev-client"
     ]
   }
 }

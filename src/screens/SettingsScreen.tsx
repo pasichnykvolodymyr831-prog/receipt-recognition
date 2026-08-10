@@ -1,24 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAppSettingsContext } from "../context/AppSettingsContext";
-import { loadApiKey, saveApiKey } from "../services/storage/settingsRepository";
 import type { AppLanguage } from "../types/models";
 
 export default function SettingsScreen() {
   const { t } = useTranslation();
   const { settings, updateSettings, updateEmployee } = useAppSettingsContext();
-  const [apiKey, setApiKey] = useState("");
-
-  useEffect(() => {
-    loadApiKey().then((key) => setApiKey(key ?? ""));
-  }, []);
-
-  const handleSaveApiKey = async () => {
-    await saveApiKey(apiKey.trim());
-    Alert.alert(t("settings.apiKeySaved"));
-  };
 
   if (!settings) {
     return (
@@ -67,22 +56,6 @@ export default function SettingsScreen() {
           placeholder={t("settings.phonePlaceholder")}
           keyboardType="phone-pad"
         />
-
-        <Text style={styles.sectionLabel}>{t("settings.apiKeySection")}</Text>
-        <Text style={styles.fieldLabel}>{t("settings.apiKeyLabel")}</Text>
-        <TextInput
-          style={styles.input}
-          value={apiKey}
-          onChangeText={setApiKey}
-          placeholder={t("settings.apiKeyPlaceholder")}
-          autoCapitalize="none"
-          autoCorrect={false}
-          secureTextEntry
-        />
-        <Text style={styles.hint}>{t("settings.apiKeyHint")}</Text>
-        <TouchableOpacity style={styles.saveButton} onPress={handleSaveApiKey}>
-          <Text style={styles.saveButtonText}>{t("settings.apiKeySave")}</Text>
-        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -124,13 +97,4 @@ const styles = StyleSheet.create({
     fontSize: 16,
     backgroundColor: "#fafafa",
   },
-  hint: { fontSize: 12, color: "#888", marginTop: 6, lineHeight: 17 },
-  saveButton: {
-    backgroundColor: "#2f6fed",
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: "center",
-    marginTop: 12,
-  },
-  saveButtonText: { color: "#fff", fontWeight: "600", fontSize: 15 },
 });
