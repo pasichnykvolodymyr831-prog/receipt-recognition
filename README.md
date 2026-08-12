@@ -1,25 +1,17 @@
-# Receipt Scanner / Payroll & Expense Tracker
+# expenseflow
 
-Мобильное приложение (Expo / React Native / TypeScript) для сотрудника:
-фотографирует чеки, распознаёт данные через Claude API, и записывает их
-в существующие корпоративные Excel-формы (Timesheet, Expense Report,
-Driving Details) без потери формул и форматирования. Все данные хранятся
-локально на телефоне.
+ExpenseFlow - offline receipt, mileage and timesheet tracking for Truman Homes
 
-Шаблоны форм-образцов лежат в `templates/` и являются эталоном структуры
-для всех генерируемых файлов.
+## Getting Started
 
-## Разработка
+This project is a starting point for a Flutter application.
 
-```bash
-npm install
-npm start
-```
+A few resources to get you started if this is your first Flutter project:
 
-Откройте проект в приложении **Expo Go** на телефоне (отсканируйте QR-код
-из терминала) для быстрой разработки без сборки.
+- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
+- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
+- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
 
-## Сборка
-
-Инструкции по сборке `.apk`/`.ipa` через `eas build` будут добавлены
-после реализации основного функционала (см. финальный раздел этого файла).
+For help getting started with Flutter development, view the
+[online documentation](https://docs.flutter.dev/), which offers tutorials,
+samples, guidance on mobile development, and a full API reference.

@@ -1,0 +1,27 @@
+{
+  "_source": "Parsed from Payroll_Dates.xlsx, Sheet2, on 2026-08-11. Sheet1 was ignored (older duplicate, no STAT column, ends with a probable year typo). Times are local (America/Edmonton).",
+  "_note_row6": "Original text said '(Aug 25 - 8:30 AM if working weekend)' for the May 9-23 period - a typo for 'May 25' (confirmed by the user), kept as May 25 here.",
+  "periods": [
+    { "start": "2026-03-09", "end": "2026-03-23", "due": "2026-03-23T16:30:00", "weekend_alt_due": null, "stat_holidays": [] },
+    { "start": "2026-03-24", "end": "2026-04-08", "due": "2026-04-08T16:30:00", "weekend_alt_due": null, "stat_holidays": [{ "name": "Good Friday", "date": "2026-04-03" }] },
+    { "start": "2026-04-09", "end": "2026-04-23", "due": "2026-04-23T16:30:00", "weekend_alt_due": null, "stat_holidays": [] },
+    { "start": "2026-04-24", "end": "2026-05-08", "due": "2026-05-08T16:30:00", "weekend_alt_due": "2026-05-10T08:30:00", "stat_holidays": [] },
+    { "start": "2026-05-09", "end": "2026-05-23", "due": "2026-05-23T16:30:00", "weekend_alt_due": "2026-05-25T08:30:00", "stat_holidays": [{ "name": "Victoria Day", "date": "2026-05-18" }] },
+    { "start": "2026-05-24", "end": "2026-06-08", "due": "2026-06-08T16:30:00", "weekend_alt_due": null, "stat_holidays": [] },
+    { "start": "2026-06-09", "end": "2026-06-23", "due": "2026-06-23T16:30:00", "weekend_alt_due": null, "stat_holidays": [] },
+    { "start": "2026-06-24", "end": "2026-07-08", "due": "2026-07-08T16:30:00", "weekend_alt_due": null, "stat_holidays": [{ "name": "Canada Day", "date": "2026-07-01" }] },
+    { "start": "2026-07-09", "end": "2026-07-23", "due": "2026-07-23T16:30:00", "weekend_alt_due": null, "stat_holidays": [] },
+    { "start": "2026-07-24", "end": "2026-08-08", "due": "2026-08-08T16:30:00", "weekend_alt_due": "2026-08-10T08:30:00", "stat_holidays": [{ "name": "Heritage Day", "date": "2026-08-03" }] },
+    { "start": "2026-08-09", "end": "2026-08-23", "due": "2026-08-21T16:30:00", "weekend_alt_due": "2026-08-23T08:30:00", "stat_holidays": [] },
+    { "start": "2026-08-24", "end": "2026-09-08", "due": "2026-09-08T16:30:00", "weekend_alt_due": null, "stat_holidays": [{ "name": "Labour Day", "date": "2026-09-07" }] },
+    { "start": "2026-09-09", "end": "2026-09-23", "due": "2026-09-23T16:30:00", "weekend_alt_due": null, "stat_holidays": [] },
+    { "start": "2026-09-24", "end": "2026-10-08", "due": "2026-10-08T16:30:00", "weekend_alt_due": null, "stat_holidays": [] },
+    { "start": "2026-10-09", "end": "2026-10-23", "due": "2026-10-23T16:30:00", "weekend_alt_due": null, "stat_holidays": [{ "name": "Thanksgiving", "date": "2026-10-12" }] },
+    { "start": "2026-10-24", "end": "2026-11-08", "due": "2026-11-06T16:30:00", "weekend_alt_due": "2026-11-08T08:30:00", "stat_holidays": [] },
+    { "start": "2026-11-09", "end": "2026-11-23", "due": "2026-11-23T16:30:00", "weekend_alt_due": null, "stat_holidays": [{ "name": "Remembrance Day", "date": "2026-11-11" }] },
+    { "start": "2026-11-24", "end": "2026-12-08", "due": "2026-12-08T16:30:00", "weekend_alt_due": null, "stat_holidays": [] },
+    { "start": "2026-12-09", "end": "2026-12-23", "due": "2026-12-23T16:30:00", "weekend_alt_due": null, "stat_holidays": [] },
+    { "start": "2026-12-24", "end": "2027-01-08", "due": "2027-01-08T16:30:00", "weekend_alt_due": null, "stat_holidays": [{ "name": "Christmas Day", "date": "2026-12-25" }, { "name": "New Year's Day", "date": "2027-01-01" }] },
+    { "start": "2027-01-09", "end": "2027-01-23", "due": "2027-01-23T16:30:00", "weekend_alt_due": "2027-01-25T08:30:00", "stat_holidays": [] }
+  ]
+}
