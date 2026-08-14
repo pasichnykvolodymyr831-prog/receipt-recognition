@@ -6,29 +6,25 @@
 // is the broader assertion the style-heal scope extension (section 0, item
 // 1) is meant to satisfy: on a real period file, whole-sheet style drift
 // measured 910 mismatched cells before any healing existed, 176 after the
-// narrower managed-cells-only fix; the Mileage Report workbook reaches
-// exactly 0 after the full-sheet heal below.
+// narrower managed-cells-only fix, 142 (Mileage) once font/border were
+// compared against the true reference template instead of a stale bundled
+// asset (section 0, item 3).
 //
-// The Timesheet workbook does NOT reach 0, and no amount of re-healing
-// closes the gap (verified: healing the same file repeatedly converges to
-// the identical 20 cells every time, never fewer, never more). Root cause,
-// confirmed by black-box testing (excel v4.0.6): once ANY cell's style is
-// reassigned anywhere in a workbook, the package flips a workbook-global
-// `_styleChanges` flag that changes how EVERY cell's style index is
-// resolved during `.encode()` -- from "keep the original per-cell index"
-// to "look this exact CellStyle object up in an internal registry, or
-// silently fall back to style index 0 (the workbook default: Aptos
-// Narrow, no border) if the lookup fails". For a small, fixed, deterministic
-// set of Sheet1 cells that lookup fails even when the CellStyle assigned is
-// verified byte-for-byte correct beforehand -- this is a defect inside the
-// `excel` package's own style-index serialization, not something reachable
-// from application code (the relevant lists are private to the package).
-// It does not affect the Mileage Report workbook.
-//
-// This is flagged to the user as a known limitation rather than silently
-// tolerated: the allowlist below is deliberately exact (not "at least
-// these" or a loose count) so any NEW cell losing its style would still
-// fail this test.
+// Both workbooks now reach exactly 0. The remaining gap after item 3 was
+// two separate `excel`-package (v4.0.6) defects style_heal.dart's
+// CellStyle-level healing structurally cannot reach: alignment (the
+// package's parser never reads `horizontal`/`vertical` off `<xf>` at all --
+// a source-confirmed bug, not a heuristic) and a small, fixed set of cells
+// (Mileage: J31 on every sheet; Timesheet: 20 cells) whose font/border/fill
+// silently fell back to the workbook default on `.encode()` even when the
+// in-memory `CellStyle` was verified byte-for-byte correct beforehand
+// (confirmed by black-box testing: once ANY cell's style is reassigned
+// anywhere in a workbook, the package flips a workbook-global
+// `_styleChanges` flag that routes every cell's style index through an
+// internal registry lookup which silently fails for these specific cells).
+// `raw_style_patch.dart` closes both by comparing each cell's actual style
+// *content* against the template directly in the encoded XML, bypassing
+// the package's object model entirely -- see its module doc for how.
 import 'dart:io';
 
 import 'package:excel/excel.dart';
@@ -39,11 +35,6 @@ import 'package:expenseflow/models/payroll_period.dart';
 import 'package:expenseflow/services/safe_xlsx_write.dart';
 import 'package:expenseflow/xlsx/managed_cells.dart';
 import 'package:expenseflow/xlsx/mileage_report_engine.dart';
-
-const timesheetKnownStyleGapCells = {
-  'A1', 'A2', 'C2', 'A5', 'A6', 'A7', 'B7', 'C7', 'D7', 'E7', 'F7', 'G7', 'H7',
-  'G39', 'A40', 'A42', 'C42', 'A44', 'A45', 'A46',
-};
 
 class _FakePathProviderPlatform extends PathProviderPlatform {
   _FakePathProviderPlatform(this._docsPath);
@@ -174,15 +165,8 @@ void main() {
     // into cells the template formats as time -- excluded the same way
     // _expectStylePreserved excludes it, via numberFormat.accepts() above.
     final mismatches = _allCellStyleMismatches(result, template, ['Sheet1']);
-    final mismatchCells = mismatches.map((m) => m.split(':').first.split('!').last).toSet();
 
-    expect(
-      mismatchCells,
-      equals(timesheetKnownStyleGapCells),
-      reason: 'style mismatches remaining after full-sheet healing changed from the known `excel`-package '
-          'limitation set -- either a regression (new cells affected) or the package behavior changed '
-          '(fewer cells affected, in which case narrow timesheetKnownStyleGapCells to match): $mismatches',
-    );
+    expect(mismatches, isEmpty, reason: 'style mismatches remaining after full-sheet healing: $mismatches');
 
     await dir.delete(recursive: true);
   });

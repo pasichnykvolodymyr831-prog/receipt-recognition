@@ -8,10 +8,13 @@ import 'package:flutter/services.dart' show rootBundle;
 
 import '../models/payroll_period.dart';
 import '../xlsx/excel_integrity.dart';
+import '../xlsx/managed_cells.dart';
 import '../xlsx/mileage_report_engine.dart';
+import '../xlsx/raw_style_patch.dart';
 import '../xlsx/style_heal.dart';
 import '../xlsx/template_assets.dart';
 import '../xlsx/timesheet_engine.dart';
+import '../xlsx/xlsx_rels_compat.dart';
 import 'backup_manager.dart';
 import 'style_warning_log.dart';
 
@@ -119,7 +122,9 @@ class _MileageRequest {
 
 void _mileageIsolateEntry(_MileageRequest req) {
   try {
-    final engine = MileageReportEngine.fromBytes(req.sourceBytes);
+    final sourceBytes = normalizeXlsxRelationshipTargets(req.sourceBytes);
+    final templateBytes = normalizeXlsxRelationshipTargets(req.templateBytes);
+    final engine = MileageReportEngine.fromBytes(sourceBytes);
     switch (req.op) {
       case _CreateMileagePeriod o:
         engine.writePeriodHeader(periodLabel: o.periodLabel, employeeName: o.employeeName);
@@ -132,22 +137,30 @@ void _mileageIsolateEntry(_MileageRequest req) {
     }
 
     req.replyPort.send(SaveXlsxPhase.writing);
-    final template = Excel.decodeBytes(req.templateBytes);
+    final template = Excel.decodeBytes(templateBytes);
     healMileageReportStyles(engine.excel, template, includeHiddenSheets: req.healHiddenSheets);
     final healedBytes = engine.excel.encode();
     if (healedBytes == null) {
       req.replyPort.send(StateError('excel.encode() returned null while healing cell styles'));
       return;
     }
+    final patchedBytes = patchRawXlsxStyles(
+      Uint8List.fromList(healedBytes),
+      templateBytes,
+      allSheets: [...mileageVisibleSheets, ...mileageHiddenSheets],
+      alignmentSheets: req.healHiddenSheets
+          ? [...mileageVisibleSheets, ...mileageHiddenSheets]
+          : mileageVisibleSheets,
+    );
 
     req.replyPort.send(SaveXlsxPhase.verifying);
-    final report = checkMileageReportIntegrity(newBytes: healedBytes, template: template);
+    final report = checkMileageReportIntegrity(newBytes: patchedBytes, template: template);
     if (!report.ok) {
       req.replyPort.send(XlsxIntegrityException(report.issues));
       return;
     }
 
-    req.replyPort.send(_MileageWriteResult(Uint8List.fromList(healedBytes), report.styleWarnings));
+    req.replyPort.send(_MileageWriteResult(patchedBytes, report.styleWarnings));
   } catch (e) {
     req.replyPort.send(e);
   }
@@ -318,7 +331,9 @@ class _TimesheetRequest {
 
 void _timesheetIsolateEntry(_TimesheetRequest req) {
   try {
-    final engine = TimesheetEngine.fromBytes(req.sourceBytes);
+    final sourceBytes = normalizeXlsxRelationshipTargets(req.sourceBytes);
+    final templateBytes = normalizeXlsxRelationshipTargets(req.templateBytes);
+    final engine = TimesheetEngine.fromBytes(sourceBytes);
     switch (req.op) {
       case _CreateTimesheetPeriod o:
         engine.writeHeader(employeeName: o.employeeName, periodLabel: o.periodLabel, phone: o.phone);
@@ -328,22 +343,28 @@ void _timesheetIsolateEntry(_TimesheetRequest req) {
     }
 
     req.replyPort.send(SaveXlsxPhase.writing);
-    final template = Excel.decodeBytes(req.templateBytes);
+    final template = Excel.decodeBytes(templateBytes);
     healTimesheetStyles(engine.excel, template);
     final healedBytes = engine.excel.encode();
     if (healedBytes == null) {
       req.replyPort.send(StateError('excel.encode() returned null while healing cell styles'));
       return;
     }
+    final patchedBytes = patchRawXlsxStyles(
+      Uint8List.fromList(healedBytes),
+      templateBytes,
+      allSheets: const ['Sheet1'],
+      alignmentSheets: const ['Sheet1'],
+    );
 
     req.replyPort.send(SaveXlsxPhase.verifying);
-    final report = checkTimesheetIntegrity(newBytes: healedBytes, template: template);
+    final report = checkTimesheetIntegrity(newBytes: patchedBytes, template: template);
     if (!report.ok) {
       req.replyPort.send(XlsxIntegrityException(report.issues));
       return;
     }
 
-    req.replyPort.send(_TimesheetWriteResult(Uint8List.fromList(healedBytes), report.styleWarnings));
+    req.replyPort.send(_TimesheetWriteResult(patchedBytes, report.styleWarnings));
   } catch (e) {
     req.replyPort.send(e);
   }
@@ -455,7 +476,7 @@ class _SummarizeTimesheetRequest {
 
 void _summarizeTimesheetIsolateEntry(_SummarizeTimesheetRequest req) {
   try {
-    final engine = TimesheetEngine.fromBytes(req.sourceBytes);
+    final engine = TimesheetEngine.fromBytes(normalizeXlsxRelationshipTargets(req.sourceBytes));
     final hoursByRow = <double?>[];
     final daysByRow = <TimesheetDayInput?>[];
     for (var row = TimesheetEngine.firstDayRow; row <= TimesheetEngine.lastDayRow; row++) {
