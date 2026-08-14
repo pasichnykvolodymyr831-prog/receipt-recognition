@@ -87,9 +87,9 @@ class TimesheetEngine {
   Data _cell(String a1) => _sheet.cell(CellIndex.indexByString(a1));
 
   void writeHeader({required String employeeName, required String periodLabel, required String phone}) {
-    _cell('C2').value = TextCellValue(employeeName);
-    _cell('C5').value = TextCellValue(periodLabel);
-    _cell('C6').value = TextCellValue(phone);
+    setCellValue(_sheet, 'C2', TextCellValue(employeeName));
+    setCellValue(_sheet, 'C5', TextCellValue(periodLabel));
+    setCellValue(_sheet, 'C6', TextCellValue(phone));
   }
 
   /// Auto-fills every day of the period starting at row 8 (Item# 1), per
@@ -102,7 +102,7 @@ class TimesheetEngine {
       if (row > lastDayRow) break;
       final date = period.start.add(Duration(days: offset));
 
-      _cell('B$row').value = DateCellValue.fromDateTime(date);
+      setCellValue(_sheet, 'B$row', DateCellValue.fromDateTime(date));
 
       final isWeekend = date.weekday == DateTime.saturday || date.weekday == DateTime.sunday;
       final isStat = period.isStatHoliday(date);
@@ -110,11 +110,11 @@ class TimesheetEngine {
         continue; // C-H stay blank
       }
 
-      _cell('C$row').value = TextCellValue('8am');
-      _cell('D$row').value = TextCellValue('1200-1230');
-      _cell('F$row').value = TextCellValue('430pm');
-      _cell('G$row').value = const DoubleCellValue(8);
-      _cell('H$row').value = const DoubleCellValue(8);
+      setCellValue(_sheet, 'C$row', TextCellValue('8am'));
+      setCellValue(_sheet, 'D$row', TextCellValue('1200-1230'));
+      setCellValue(_sheet, 'F$row', TextCellValue('430pm'));
+      setCellValue(_sheet, 'G$row', const DoubleCellValue(8));
+      setCellValue(_sheet, 'H$row', const DoubleCellValue(8));
     }
     recalcTotalHours();
   }
@@ -125,18 +125,18 @@ class TimesheetEngine {
     if (row < firstDayRow || row > lastDayRow) {
       throw RangeError.value(row, 'row', 'Must be between $firstDayRow and $lastDayRow');
     }
-    _cell('C$row').value = TextCellValue(formatClockTime(input.start));
-    _cell('D$row').value = TextCellValue(formatTimeRange(input.lunchStart, input.lunchEnd));
+    setCellValue(_sheet, 'C$row', TextCellValue(formatClockTime(input.start)));
+    setCellValue(_sheet, 'D$row', TextCellValue(formatTimeRange(input.lunchStart, input.lunchEnd)));
     if (input.coffeeStart != null && input.coffeeEnd != null) {
-      _cell('E$row').value = TextCellValue(formatTimeRange(input.coffeeStart!, input.coffeeEnd!));
+      setCellValue(_sheet, 'E$row', TextCellValue(formatTimeRange(input.coffeeStart!, input.coffeeEnd!)));
     } else {
-      _cell('E$row').value = null;
+      setCellValue(_sheet, 'E$row', null);
     }
-    _cell('F$row').value = TextCellValue(formatClockTime(input.finish));
+    setCellValue(_sheet, 'F$row', TextCellValue(formatClockTime(input.finish)));
 
     final hours = input.hours;
-    _cell('G$row').value = DoubleCellValue(hours);
-    _cell('H$row').value = DoubleCellValue(hours);
+    setCellValue(_sheet, 'G$row', DoubleCellValue(hours));
+    setCellValue(_sheet, 'H$row', DoubleCellValue(hours));
 
     recalcTotalHours();
   }
@@ -181,9 +181,9 @@ class TimesheetEngine {
       if (value != null) total += value;
     }
     if (total == total.roundToDouble()) {
-      _cell('H$totalRow').value = IntCellValue(total.toInt());
+      setCellValue(_sheet, 'H$totalRow', IntCellValue(total.toInt()));
     } else {
-      _cell('H$totalRow').value = DoubleCellValue(total);
+      setCellValue(_sheet, 'H$totalRow', DoubleCellValue(total));
     }
   }
 }

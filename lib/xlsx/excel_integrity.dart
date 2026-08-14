@@ -1,28 +1,48 @@
 import 'package:excel/excel.dart';
 
+import 'managed_cells.dart';
 import 'xlsx_raw_inspect.dart';
 
 /// Result of an integrity check (section 13.2): whether the write is safe
-/// to keep, and a human-readable list of what failed if not.
+/// to keep, a human-readable list of fatal problems if not (formulas turned
+/// into values, hidden sheets touched, file won't open -- these block the
+/// write), and a separate list of non-fatal style warnings (border/font/
+/// number_format drift from the template -- logged, never blocks a write,
+/// since [healMileageReportStyles]/[healTimesheetStyles] in style_heal.dart
+/// already run before this check and are expected to have fixed it; a
+/// residual warning here means healing couldn't fully match the template,
+/// e.g. the known text-in-a-time-formatted-cell number_format quirk).
 class IntegrityReport {
   final bool ok;
   final List<String> issues;
-  const IntegrityReport(this.ok, this.issues);
+  final List<String> styleWarnings;
+  const IntegrityReport(this.ok, this.issues, {this.styleWarnings = const []});
   factory IntegrityReport.success() => const IntegrityReport(true, []);
 }
 
-const mileageHiddenSheets = ['Truman Dev', 'Lionsworthe', 'Taphouse', 'Metro', 'Sheet1'];
-const mileageVisibleSheets = ['Truman Homes', 'Driving Details'];
-
-/// Verifies a freshly-written Mileage Report workbook against the copy it
-/// was derived from: the 5 hidden sheets must stay hidden and untouched,
-/// and every formula cell in the Truman Homes / Driving Details sheets
-/// must still be a formula (not baked into a plain number).
+/// Verifies a freshly-written Mileage Report workbook: the 5 hidden sheets
+/// must stay hidden, and their content must match [template] exactly, and
+/// every formula cell in the Truman Homes / Driving Details sheets must
+/// still be a formula (not baked into a plain number).
+///
+/// [newBytes] is deliberately re-decoded from the already-encoded bytes
+/// about to be written to disk, rather than checking the in-memory workbook
+/// object the caller healed -- this is what catches corruption introduced
+/// by the encode step itself (e.g. a known `excel`-package bug where a
+/// cell's style silently reverts on encode even when the in-memory
+/// [CellStyle] was verified correct beforehand). [template] is compared
+/// against directly (not "the file as it was right before this write") --
+/// hidden sheets are copied verbatim from the template once, at period-file
+/// creation, and the app never touches them again, so "matches the
+/// template" and "unchanged since last write" are equivalent, and the
+/// former is the stronger guarantee (it also catches drift from any
+/// earlier write, not just this one).
 IntegrityReport checkMileageReportIntegrity({
-  required List<int> originalBytes,
   required List<int> newBytes,
+  required Excel template,
 }) {
   final issues = <String>[];
+  final styleWarnings = <String>[];
 
   Excel newExcel;
   try {
@@ -31,19 +51,12 @@ IntegrityReport checkMileageReportIntegrity({
     return IntegrityReport(false, ['File does not open: $e']);
   }
 
-  Excel originalExcel;
-  try {
-    originalExcel = Excel.decodeBytes(originalBytes);
-  } catch (e) {
-    return IntegrityReport(false, ['Original reference file does not open: $e']);
-  }
-
   final hiddenStates = readSheetHiddenStates(newBytes);
   for (final name in mileageHiddenSheets) {
     if (hiddenStates[name] != true) {
       issues.add('Sheet "$name" is not hidden (expected hidden)');
     }
-    final same = _sheetsEqual(originalExcel.sheets[name], newExcel.sheets[name]);
+    final same = _sheetsEqual(template.sheets[name], newExcel.sheets[name]);
     if (!same) {
       issues.add('Hidden sheet "$name" content changed');
     }
@@ -55,6 +68,7 @@ IntegrityReport checkMileageReportIntegrity({
   }
 
   final sheet = newExcel.sheets['Truman Homes'];
+  final templateSheet = template.sheets['Truman Homes'];
   if (sheet == null) {
     issues.add('Sheet "Truman Homes" missing');
   } else {
@@ -68,9 +82,16 @@ IntegrityReport checkMileageReportIntegrity({
     _expectFormula(sheet, 'L28', issues);
     _expectNotFormula(sheet, 'I28', issues); // hardcoded 0 by design, section 6.1
     _expectFormula(sheet, 'M30', issues);
+
+    if (templateSheet != null) {
+      for (final a1 in mileageTrumanHomesManagedCells) {
+        _expectStylePreserved(sheet, templateSheet, a1, styleWarnings);
+      }
+    }
   }
 
   final drivingSheet = newExcel.sheets['Driving Details'];
+  final templateDrivingSheet = template.sheets['Driving Details'];
   if (drivingSheet == null) {
     issues.add('Sheet "Driving Details" missing');
   } else {
@@ -79,15 +100,30 @@ IntegrityReport checkMileageReportIntegrity({
     }
     _expectFormula(drivingSheet, 'C19', issues);
     _expectFormula(drivingSheet, 'D19', issues);
+
+    if (templateDrivingSheet != null) {
+      for (final a1 in mileageDrivingDetailsManagedCells) {
+        _expectStylePreserved(drivingSheet, templateDrivingSheet, a1, styleWarnings);
+      }
+    }
   }
 
-  return issues.isEmpty ? IntegrityReport.success() : IntegrityReport(false, issues);
+  return IntegrityReport(issues.isEmpty, issues, styleWarnings: styleWarnings);
 }
 
-/// Verifies a freshly-written Timesheet workbook opens correctly and that
-/// its Item# column (A8:A38, fixed values 1-31 from the template) is intact.
-IntegrityReport checkTimesheetIntegrity({required List<int> newBytes}) {
+/// Verifies a freshly-written Timesheet workbook opens correctly, that its
+/// Item# column (A8:A38, fixed values 1-31 from the template) is intact,
+/// and that every cell the app writes to still carries [template]'s
+/// border/font/number_format -- as a non-fatal warning, since
+/// style_heal.dart is expected to have fixed it before this check runs.
+/// See [checkMileageReportIntegrity] for why [newBytes] is re-decoded here
+/// rather than reusing the caller's in-memory workbook object.
+IntegrityReport checkTimesheetIntegrity({
+  required List<int> newBytes,
+  required Excel template,
+}) {
   final issues = <String>[];
+  final styleWarnings = <String>[];
   Excel newExcel;
   try {
     newExcel = Excel.decodeBytes(newBytes);
@@ -111,7 +147,14 @@ IntegrityReport checkTimesheetIntegrity({required List<int> newBytes}) {
     }
   }
 
-  return issues.isEmpty ? IntegrityReport.success() : IntegrityReport(false, issues);
+  final templateSheet = template.sheets['Sheet1'];
+  if (templateSheet != null) {
+    for (final a1 in timesheetManagedCells) {
+      _expectStylePreserved(sheet, templateSheet, a1, styleWarnings);
+    }
+  }
+
+  return IntegrityReport(issues.isEmpty, issues, styleWarnings: styleWarnings);
 }
 
 void _expectFormula(Sheet sheet, String a1, List<String> issues) {
@@ -125,6 +168,48 @@ void _expectNotFormula(Sheet sheet, String a1, List<String> issues) {
   final value = sheet.cell(CellIndex.indexByString(a1)).value;
   if (value is FormulaCellValue) {
     issues.add('Expected a plain value at $a1 (by design) but found a formula');
+  }
+}
+
+/// Verifies that [a1] on [sheet] still has the border/font/number_format it
+/// had at [a1] on [templateSheet]. Guards against the `excel` package
+/// silently resetting a cell's style to its default whenever a value is
+/// written to it (see [setCellValue] in cell_value_utils.dart).
+void _expectStylePreserved(Sheet sheet, Sheet templateSheet, String a1, List<String> issues) {
+  final cell = sheet.cell(CellIndex.indexByString(a1));
+  final style = cell.cellStyle;
+  final templateStyle = templateSheet.cell(CellIndex.indexByString(a1)).cellStyle;
+  if (style == templateStyle) return;
+
+  if (templateStyle == null) {
+    issues.add('Cell $a1 has a style but the template did not');
+    return;
+  }
+  if (style == null) {
+    issues.add('Cell $a1 lost its style entirely (expected border/font/number_format from template)');
+    return;
+  }
+  // Skip the number_format comparison when the template's format can't
+  // actually hold this cell's value type (e.g. a "h:mm" time format on a
+  // cell the app fills with a formatted text string like "8am" -- Timesheet
+  // stores Start/Lunch/Finish as text, not real Excel time values). Excel
+  // ignores number formats on text, so re-deriving a compatible format
+  // there isn't a style regression; the `excel` package itself falls back
+  // to General for exactly this reason when it re-reads such a cell.
+  if (templateStyle.numberFormat.accepts(cell.value) &&
+      style.numberFormat.formatCode != templateStyle.numberFormat.formatCode) {
+    issues.add(
+        'Cell $a1 number_format changed: expected "${templateStyle.numberFormat.formatCode}", found "${style.numberFormat.formatCode}"');
+  }
+  if (style.fontFamily != templateStyle.fontFamily || style.fontSize != templateStyle.fontSize) {
+    issues.add(
+        'Cell $a1 font changed: expected ${templateStyle.fontFamily} ${templateStyle.fontSize}pt, found ${style.fontFamily} ${style.fontSize}pt');
+  }
+  if (style.topBorder != templateStyle.topBorder ||
+      style.bottomBorder != templateStyle.bottomBorder ||
+      style.leftBorder != templateStyle.leftBorder ||
+      style.rightBorder != templateStyle.rightBorder) {
+    issues.add('Cell $a1 border changed from the template');
   }
 }
 

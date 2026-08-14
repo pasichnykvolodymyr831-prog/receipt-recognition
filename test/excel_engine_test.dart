@@ -107,6 +107,44 @@ void main() {
           reason: 'the rejected receipt must not have been written anywhere');
     });
 
+    test('receipt and driving-detail cells keep the template border/font/number_format after being written', () {
+      final templateSheet = MileageReportEngine.fromBytes(originalBytes).excel.sheets['Truman Homes']!;
+      final templateDrivingSheet = MileageReportEngine.fromBytes(originalBytes).excel.sheets['Driving Details']!;
+
+      engine.writeDrivingDetail(date: DateTime(2026, 8, 10), trip: 'Site A to Site B', km: 42.5);
+      engine.writeReceipt(
+        ReceiptInput(
+          date: DateTime(2026, 8, 10),
+          description: 'Home Depot - toilet fill valve, garbage bags',
+          subtotal: 45.99,
+          gst: 2.30,
+        ),
+        currentKmTotal: engine.sumDrivingDetailsKm(),
+      );
+
+      for (final a1 in ['A8', 'B8', 'D8', 'K8', 'A10', 'B10']) {
+        final written = sheet.cell(CellIndex.indexByString(a1)).cellStyle;
+        final template = templateSheet.cell(CellIndex.indexByString(a1)).cellStyle;
+        expect(written, isNotNull, reason: '$a1 should still have a style after being written');
+        expect(written!.numberFormat.formatCode, template!.numberFormat.formatCode,
+            reason: '$a1 number_format should match the template');
+        expect(written.fontFamily, template.fontFamily, reason: '$a1 font family should match the template');
+        expect(written.fontSize, template.fontSize, reason: '$a1 font size should match the template');
+        expect(written.topBorder, template.topBorder, reason: '$a1 top border should match the template');
+        expect(written.bottomBorder, template.bottomBorder, reason: '$a1 bottom border should match the template');
+      }
+
+      final drivingSheet = engine.excel.sheets['Driving Details']!;
+      for (final a1 in ['A2', 'B2', 'C2']) {
+        final written = drivingSheet.cell(CellIndex.indexByString(a1)).cellStyle;
+        final template = templateDrivingSheet.cell(CellIndex.indexByString(a1)).cellStyle;
+        expect(written, isNotNull, reason: '$a1 should still have a style after being written');
+        expect(written!.numberFormat.formatCode, template!.numberFormat.formatCode,
+            reason: '$a1 number_format should match the template');
+        expect(written.fontFamily, template.fontFamily, reason: '$a1 font family should match the template');
+      }
+    });
+
     test('written file passes the integrity check and survives a disk round-trip', () {
       engine.writeDrivingDetail(date: DateTime(2026, 8, 10), trip: 'Site A to Site B', km: 42.5);
       for (var i = 0; i < 5; i++) {
@@ -120,8 +158,9 @@ void main() {
       final outFile = File('build/verify_output/MileageReport_test.xlsx')..createSync(recursive: true);
       outFile.writeAsBytesSync(newBytes);
 
-      final report = checkMileageReportIntegrity(originalBytes: originalBytes, newBytes: newBytes);
+      final report = checkMileageReportIntegrity(newBytes: newBytes, template: Excel.decodeBytes(originalBytes));
       expect(report.ok, true, reason: report.issues.join('; '));
+      expect(report.styleWarnings, isEmpty, reason: report.styleWarnings.join('; '));
 
       final reopened = MileageReportEngine.fromBytes(outFile.readAsBytesSync());
       expect(reopened.findKilometersRow(), engine.findKilometersRow());
@@ -200,6 +239,32 @@ void main() {
       expect(numberOf(sheet.cell(CellIndex.indexByString('H39')).value), expectedTotal);
     });
 
+    test('written day and header cells keep the template border/font/number_format', () {
+      final templateSheet = TimesheetEngine.fromBytes(originalBytes).excel.sheets['Sheet1']!;
+
+      engine.writeDay(
+        9,
+        const TimesheetDayInput(
+          start: TimeOfDay(hour: 8, minute: 0),
+          lunchStart: TimeOfDay(hour: 12, minute: 0),
+          lunchEnd: TimeOfDay(hour: 12, minute: 30),
+          finish: TimeOfDay(hour: 16, minute: 45),
+        ),
+      );
+
+      for (final a1 in ['B9', 'C9', 'D9', 'F9', 'G9', 'H9', 'H39']) {
+        final written = sheet.cell(CellIndex.indexByString(a1)).cellStyle;
+        final template = templateSheet.cell(CellIndex.indexByString(a1)).cellStyle;
+        expect(written, isNotNull, reason: '$a1 should still have a style after being written');
+        expect(written!.numberFormat.formatCode, template!.numberFormat.formatCode,
+            reason: '$a1 number_format should match the template');
+        expect(written.fontFamily, template.fontFamily, reason: '$a1 font family should match the template');
+        expect(written.fontSize, template.fontSize, reason: '$a1 font size should match the template');
+        expect(written.topBorder, template.topBorder, reason: '$a1 top border should match the template');
+        expect(written.bottomBorder, template.bottomBorder, reason: '$a1 bottom border should match the template');
+      }
+    });
+
     test('written file passes the integrity check', () {
       engine.writeDay(
         9,
@@ -214,8 +279,9 @@ void main() {
       final outFile = File('build/verify_output/Timesheet_test.xlsx')..createSync(recursive: true);
       outFile.writeAsBytesSync(newBytes);
 
-      final report = checkTimesheetIntegrity(newBytes: newBytes);
+      final report = checkTimesheetIntegrity(newBytes: newBytes, template: Excel.decodeBytes(originalBytes));
       expect(report.ok, true, reason: report.issues.join('; '));
+      expect(report.styleWarnings, isEmpty, reason: report.styleWarnings.join('; '));
     });
   });
 }

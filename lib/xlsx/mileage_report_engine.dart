@@ -98,15 +98,15 @@ class MileageReportEngine {
   /// Writes M3 (period label) and B3 (employee name). Called once when a
   /// new period's file is created (section 5).
   void writePeriodHeader({required String periodLabel, required String employeeName}) {
-    _cell(_sheet, 'M3').value = TextCellValue(periodLabel);
-    _cell(_sheet, 'B3').value = TextCellValue(employeeName);
+    setCellValue(_sheet, 'M3', TextCellValue(periodLabel));
+    setCellValue(_sheet, 'B3', TextCellValue(employeeName));
   }
 
   /// Initializes row 8 as the Kilometers row on a freshly created period
   /// file, before any receipts exist (section 7, "Инициализация нового периода").
   void initializeKilometersRow({required DateTime periodEnd}) {
-    _cell(_sheet, 'A8').value = DateCellValue.fromDateTime(periodEnd);
-    _cell(_sheet, 'B8').value = TextCellValue('Kilometers (0)');
+    setCellValue(_sheet, 'A8', DateCellValue.fromDateTime(periodEnd));
+    setCellValue(_sheet, 'B8', TextCellValue('Kilometers (0)'));
   }
 
   /// Finds the row (1-based) whose Description (column B) starts with
@@ -162,31 +162,31 @@ class MileageReportEngine {
     final travelValue = _cell(_sheet, 'E$fromRow').value;
     final dateValue = _cell(_sheet, 'A$fromRow').value;
 
-    _cell(_sheet, 'A$toRow').value = dateValue;
-    _cell(_sheet, 'B$toRow').value = TextCellValue('Kilometers (${formatKmCount(kmTotal)})');
-    _cell(_sheet, 'E$toRow').value = travelValue;
+    setCellValue(_sheet, 'A$toRow', dateValue);
+    setCellValue(_sheet, 'B$toRow', TextCellValue('Kilometers (${formatKmCount(kmTotal)})'));
+    setCellValue(_sheet, 'E$toRow', travelValue);
 
     // The source row is about to be reused (either as the new receipt row
     // or as the new gap row) -- it must not keep the old "Kilometers (...)"
     // marker text, or findKilometersRow() would match it as well as the
     // real (moved) row.
-    _cell(_sheet, 'A$fromRow').value = null;
-    _cell(_sheet, 'B$fromRow').value = null;
-    _cell(_sheet, 'E$fromRow').value = null;
+    setCellValue(_sheet, 'A$fromRow', null);
+    setCellValue(_sheet, 'B$fromRow', null);
+    setCellValue(_sheet, 'E$fromRow', null);
   }
 
   void _writeReceiptRow(int row, ReceiptInput receipt) {
     if (receipt.date != null) {
-      _cell(_sheet, 'A$row').value = DateCellValue.fromDateTime(receipt.date!);
+      setCellValue(_sheet, 'A$row', DateCellValue.fromDateTime(receipt.date!));
     }
     if (receipt.description != null && receipt.description!.trim().isNotEmpty) {
-      _cell(_sheet, 'B$row').value = TextCellValue(receipt.description!);
+      setCellValue(_sheet, 'B$row', TextCellValue(receipt.description!));
     }
     if (receipt.subtotal != null) {
-      _cell(_sheet, 'D$row').value = DoubleCellValue(receipt.subtotal!);
+      setCellValue(_sheet, 'D$row', DoubleCellValue(receipt.subtotal!));
     }
     if (receipt.gst != null) {
-      _cell(_sheet, 'K$row').value = DoubleCellValue(receipt.gst!);
+      setCellValue(_sheet, 'K$row', DoubleCellValue(receipt.gst!));
     }
   }
 
@@ -194,11 +194,11 @@ class MileageReportEngine {
   /// to touch). Columns I and L (formulas) and C/F/G/H (always unused) are
   /// left untouched.
   void _clearRow(int row) {
-    _cell(_sheet, 'A$row').value = null;
-    _cell(_sheet, 'B$row').value = null;
-    _cell(_sheet, 'D$row').value = null;
-    _cell(_sheet, 'E$row').value = null;
-    _cell(_sheet, 'K$row').value = null;
+    setCellValue(_sheet, 'A$row', null);
+    setCellValue(_sheet, 'B$row', null);
+    setCellValue(_sheet, 'D$row', null);
+    setCellValue(_sheet, 'E$row', null);
+    setCellValue(_sheet, 'K$row', null);
   }
 
   /// Recomputes the Kilometers row's Description from [kmTotal] without
@@ -210,7 +210,7 @@ class MileageReportEngine {
       throw const MileageReportStructureException(
           'No "Kilometers (" row found -- period file was not initialized correctly.');
     }
-    _cell(_sheet, 'B$kmRow').value = TextCellValue('Kilometers (${formatKmCount(kmTotal)})');
+    setCellValue(_sheet, 'B$kmRow', TextCellValue('Kilometers (${formatKmCount(kmTotal)})'));
   }
 
   /// Sums the Driving Details KM column (C2:C18) for the current period.
@@ -247,9 +247,9 @@ class MileageReportEngine {
     if (row == null) {
       throw const MileageReportRowsExhaustedException();
     }
-    _cell(_drivingSheet, 'A$row').value = DateCellValue.fromDateTime(date);
-    _cell(_drivingSheet, 'B$row').value = TextCellValue(trip);
-    _cell(_drivingSheet, 'C$row').value = DoubleCellValue(km);
+    setCellValue(_drivingSheet, 'A$row', DateCellValue.fromDateTime(date));
+    setCellValue(_drivingSheet, 'B$row', TextCellValue(trip));
+    setCellValue(_drivingSheet, 'C$row', DoubleCellValue(km));
 
     recalcKilometersDescription(kmTotal: sumDrivingDetailsKm());
   }

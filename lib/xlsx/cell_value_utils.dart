@@ -1,5 +1,23 @@
 import 'package:excel/excel.dart';
 
+/// Writes [value] to the cell at [a1] on [sheet] without losing the cell's
+/// existing style (border, font, number_format).
+///
+/// The `excel` package (v4) always resets a cell to a brand-new default
+/// [CellStyle] as a side effect of writing its value -- see `Sheet._putData`,
+/// which unconditionally does `cell._cellStyle = CellStyle(...)` before the
+/// value assignment returns. There is no package API to set a value without
+/// touching style, so every write in this app must go through here: capture
+/// the style beforehand, write the value, then reapply the captured style.
+void setCellValue(Sheet sheet, String a1, CellValue? value) {
+  final cell = sheet.cell(CellIndex.indexByString(a1));
+  final style = cell.cellStyle;
+  cell.value = value;
+  if (style != null) {
+    cell.cellStyle = style;
+  }
+}
+
 /// Returns the plain text of a cell, or '' if the cell is empty/non-text.
 /// Works for [TextCellValue] and falls back to [CellValue.toString] for
 /// other populated types so callers can still prefix-match formula/number

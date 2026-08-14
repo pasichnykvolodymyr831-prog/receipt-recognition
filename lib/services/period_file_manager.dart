@@ -1,11 +1,9 @@
 import 'dart:io';
 
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 
 import '../models/payroll_period.dart';
-import '../xlsx/mileage_report_engine.dart';
-import '../xlsx/timesheet_engine.dart';
+import 'safe_xlsx_write.dart';
 import 'settings_repository.dart';
 
 String periodLabel(PayrollPeriod period) {
@@ -50,23 +48,35 @@ class PeriodFileManager {
 
   /// Creates both files for [period] from the bundled templates if they
   /// don't already exist (section 5). No-op if they're already there.
+  ///
+  /// This is the one time the Mileage Report's 5 hidden sheets get healed
+  /// (see [createMileagePeriod]) -- they're copied verbatim from the
+  /// template right here, so healing them now, once, is enough; every
+  /// later write (add receipt/trip/timesheet edit) only heals the visible
+  /// sheets, since re-healing potentially large hidden sheets on every
+  /// single write was measured to dominate save latency on a real device.
+  /// Both files are built inside a spawned isolate (see safe_xlsx_write.dart)
+  /// so this doesn't block the UI isolate at app startup either.
   Future<void> ensureFilesExist(PayrollPeriod period, AppSettings settings) async {
     final mileageFile = await mileageReportFile(period);
     if (!await mileageFile.exists()) {
-      final templateBytes = await rootBundle.load('assets/templates/Truman_Homes_Mileage_Report_TEMPLATE.xlsx');
-      final engine = MileageReportEngine.fromBytes(templateBytes.buffer.asUint8List());
-      engine.writePeriodHeader(periodLabel: periodLabel(period), employeeName: settings.fullName);
-      engine.initializeKilometersRow(periodEnd: period.end);
-      await mileageFile.writeAsBytes(engine.save());
+      await createMileagePeriod(
+        mileageFile,
+        periodLabel: periodLabel(period),
+        employeeName: settings.fullName,
+        periodEnd: period.end,
+      );
     }
 
     final timesheetFileHandle = await timesheetFile(period);
     if (!await timesheetFileHandle.exists()) {
-      final templateBytes = await rootBundle.load('assets/templates/Truman_Homes_Timesheet_TEMPLATE.xlsx');
-      final engine = TimesheetEngine.fromBytes(templateBytes.buffer.asUint8List());
-      engine.writeHeader(employeeName: settings.fullName, periodLabel: periodLabel(period), phone: settings.phone);
-      engine.autoFillPeriod(period);
-      await timesheetFileHandle.writeAsBytes(engine.save());
+      await createTimesheetPeriod(
+        timesheetFileHandle,
+        employeeName: settings.fullName,
+        periodLabel: periodLabel(period),
+        phone: settings.phone,
+        period: period,
+      );
     }
   }
 

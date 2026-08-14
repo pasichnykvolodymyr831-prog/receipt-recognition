@@ -20,7 +20,9 @@ class TimesheetScreen extends StatefulWidget {
 
 class _TimesheetScreenState extends State<TimesheetScreen> {
   late Future<void> _loadFuture;
-  TimesheetEngine? _engine;
+  TimesheetSummary? _summary;
+  bool _busy = false;
+  SaveXlsxPhase? _savePhase;
 
   @override
   void initState() {
@@ -31,22 +33,41 @@ class _TimesheetScreenState extends State<TimesheetScreen> {
   Future<void> _load() async {
     final fileManager = PeriodFileManager();
     final file = await fileManager.timesheetFile(widget.period);
-    _engine = TimesheetEngine.fromBytes(await file.readAsBytes());
+    _summary = await readTimesheetSummary(file);
   }
 
   Future<void> _openDay(int row, DateTime date) async {
-    final engine = _engine!;
-    final existing = engine.readDay(row);
+    if (_busy) return; // guards against a second tap starting a concurrent write
+    final existing = _summary!.daysByRow[row - TimesheetEngine.firstDayRow];
     final result = await Navigator.of(context).push<TimesheetDayInput>(
       MaterialPageRoute(builder: (context) => _EditDayScreen(date: date, initial: existing)),
     );
     if (result == null) return;
 
-    engine.writeDay(row, result);
-    final fileManager = PeriodFileManager();
-    final file = await fileManager.timesheetFile(widget.period);
-    await writeTimesheetSafely(file, engine.save());
-    setState(() {});
+    setState(() {
+      _busy = true;
+      _savePhase = SaveXlsxPhase.reading;
+    });
+    try {
+      final fileManager = PeriodFileManager();
+      final file = await fileManager.timesheetFile(widget.period);
+      await saveTimesheetDay(
+        file,
+        row: row,
+        input: result,
+        onPhase: (phase) {
+          if (mounted) setState(() => _savePhase = phase);
+        },
+      );
+      _summary = await readTimesheetSummary(file);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(t(context, 'drivingDetails.saveError', {'error': '$e'}))));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
@@ -59,37 +80,67 @@ class _TimesheetScreenState extends State<TimesheetScreen> {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
           }
-          final engine = _engine!;
+          final summary = _summary!;
           final totalDays = widget.period.end.difference(widget.period.start).inDays + 1;
 
-          return ListView.builder(
-            itemCount: totalDays + 1,
-            itemBuilder: (context, index) {
-              if (index == totalDays) {
-                return ListTile(
-                  title: Text(t(context, 'timesheet.totalHrs'), style: const TextStyle(fontWeight: FontWeight.bold)),
-                  trailing: Text(engine.readTotalHours().toStringAsFixed(2)),
-                );
-              }
-              final row = TimesheetEngine.firstDayRow + index;
-              final date = widget.period.start.add(Duration(days: index));
-              final hours = engine.readHours(row);
-              final isWeekend = date.weekday == DateTime.saturday || date.weekday == DateTime.sunday;
-              final isStat = widget.period.isStatHoliday(date);
-              final dateFmt =
-                  '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+          return Stack(
+            children: [
+              AbsorbPointer(
+                absorbing: _busy,
+                child: ListView.builder(
+                  itemCount: totalDays + 1,
+                  itemBuilder: (context, index) {
+                    if (index == totalDays) {
+                      return ListTile(
+                        title:
+                            Text(t(context, 'timesheet.totalHrs'), style: const TextStyle(fontWeight: FontWeight.bold)),
+                        trailing: Text(summary.totalHours.toStringAsFixed(2)),
+                      );
+                    }
+                    final row = TimesheetEngine.firstDayRow + index;
+                    final date = widget.period.start.add(Duration(days: index));
+                    final hours = summary.hoursByRow[index];
+                    final isWeekend = date.weekday == DateTime.saturday || date.weekday == DateTime.sunday;
+                    final isStat = widget.period.isStatHoliday(date);
+                    final dateFmt =
+                        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
 
-              return ListTile(
-                title: Text(dateFmt),
-                subtitle: isStat
-                    ? Text(t(context, 'timesheet.statHoliday'))
-                    : (isWeekend ? Text(t(context, 'timesheet.weekend')) : null),
-                trailing: Text(hours != null ? '${hours.toStringAsFixed(2)}h' : '—'),
-                onTap: () => _openDay(row, date),
-              );
-            },
+                    return ListTile(
+                      title: Text(dateFmt),
+                      subtitle: isStat
+                          ? Text(t(context, 'timesheet.statHoliday'))
+                          : (isWeekend ? Text(t(context, 'timesheet.weekend')) : null),
+                      trailing: Text(hours != null ? '${hours.toStringAsFixed(2)}h' : '—'),
+                      onTap: () => _openDay(row, date),
+                    );
+                  },
+                ),
+              ),
+              if (_busy) _buildSaveProgressOverlay(context),
+            ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildSaveProgressOverlay(BuildContext context) {
+    final label = saveXlsxPhaseLabel(context, _savePhase);
+    return Positioned.fill(
+      child: ColoredBox(
+        color: Theme.of(context).scaffoldBackgroundColor.withValues(alpha: 0.85),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              if (label != null) ...[
+                const SizedBox(height: 16),
+                Text(label),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }

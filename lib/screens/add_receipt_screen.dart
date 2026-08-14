@@ -26,6 +26,7 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
   _EntryMode _mode = _EntryMode.none;
   bool _editing = false;
   bool _busy = false;
+  SaveXlsxPhase? _savePhase;
 
   DateTime? _date;
   double? _subtotal;
@@ -125,28 +126,30 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
   }
 
   Future<void> _save() async {
+    if (_busy) return; // guards against a second tap starting a concurrent write
     final subtotal = _editing ? double.tryParse(_subtotalController.text) : _subtotal;
     final gst = _editing ? double.tryParse(_gstController.text) : _gst;
     final description = _descriptionController.text.trim();
 
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _savePhase = SaveXlsxPhase.reading;
+    });
     try {
       final fileManager = PeriodFileManager();
       final file = await fileManager.mileageReportFile(widget.period);
-      final engine = MileageReportEngine.fromBytes(await file.readAsBytes());
-      final kmTotal = engine.sumDrivingDetailsKm();
-
-      engine.writeReceipt(
+      await saveMileageReceipt(
+        file,
         ReceiptInput(
           date: _date,
           description: description.isEmpty ? null : description,
           subtotal: subtotal,
           gst: gst,
         ),
-        currentKmTotal: kmTotal,
+        onPhase: (phase) {
+          if (mounted) setState(() => _savePhase = phase);
+        },
       );
-
-      await writeMileageReportSafely(file, engine.save());
 
       if (mounted) Navigator.of(context).pop(true);
     } on MileageReportRowsExhaustedException {
@@ -177,10 +180,26 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(t(context, 'addReceipt.title'))),
       body: _busy
-          ? const Center(child: CircularProgressIndicator())
+          ? _buildSaveProgress(context)
           : _mode == _EntryMode.none
               ? _buildEntryChoice()
               : _buildConfirmForm(),
+    );
+  }
+
+  Widget _buildSaveProgress(BuildContext context) {
+    final label = saveXlsxPhaseLabel(context, _savePhase);
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(),
+          if (label != null) ...[
+            const SizedBox(height: 16),
+            Text(label),
+          ],
+        ],
+      ),
     );
   }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 
+import '../services/safe_xlsx_write.dart';
 import 'locale_controller.dart';
 
 /// Lightweight EN/RU string table (section 11): English is the default,
@@ -14,6 +15,13 @@ const Map<String, Map<String, String>> _strings = {
   'common.save': {'en': 'Save', 'ru': 'Сохранить'},
   'common.ok': {'en': 'OK', 'ru': 'ОК'},
   'common.edit': {'en': 'Edit', 'ru': 'Редактировать'},
+
+  // Save-progress phases (a period-file save commonly takes several
+  // seconds, dominated by the xlsx library's own decode/encode cost --
+  // shown so it doesn't read as a freeze).
+  'save.phaseReading': {'en': 'Reading file…', 'ru': 'Чтение файла…'},
+  'save.phaseWriting': {'en': 'Writing…', 'ru': 'Запись…'},
+  'save.phaseVerifying': {'en': 'Verifying…', 'ru': 'Проверка…'},
 
   'home.currentPeriod': {'en': 'Current period', 'ru': 'Текущий период'},
   'home.due': {'en': 'Due:', 'ru': 'Срок сдачи:'},
@@ -153,4 +161,15 @@ String t(BuildContext context, String key, [Map<String, String>? params]) {
     }
   }
   return value;
+}
+
+/// Localized label for the current phase of a period-file save (see
+/// [SaveXlsxPhase]); null shows nothing (used before a save has started).
+String? saveXlsxPhaseLabel(BuildContext context, SaveXlsxPhase? phase) {
+  return switch (phase) {
+    null => null,
+    SaveXlsxPhase.reading => t(context, 'save.phaseReading'),
+    SaveXlsxPhase.writing => t(context, 'save.phaseWriting'),
+    SaveXlsxPhase.verifying => t(context, 'save.phaseVerifying'),
+  };
 }
