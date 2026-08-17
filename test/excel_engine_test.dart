@@ -3,6 +3,7 @@
 // structural integrity (hidden sheets untouched, formulas stay formulas,
 // files open without error). Run with: `flutter test test/excel_engine_test.dart`
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:excel/excel.dart';
 import 'package:flutter/material.dart';
@@ -13,6 +14,7 @@ import 'package:expenseflow/xlsx/cell_value_utils.dart';
 import 'package:expenseflow/xlsx/excel_integrity.dart';
 import 'package:expenseflow/xlsx/mileage_report_engine.dart';
 import 'package:expenseflow/xlsx/timesheet_engine.dart';
+import 'package:expenseflow/xlsx/xlsx_rels_compat.dart';
 
 const mileageTemplatePath = 'assets/templates/Truman_Homes_Mileage_Report_TEMPLATE.xlsx';
 const timesheetTemplatePath = 'assets/templates/Truman_Homes_Timesheet_TEMPLATE.xlsx';
@@ -66,21 +68,32 @@ void main() {
       expect(isEmptyCell(sheet.cell(CellIndex.indexByString('A9')).value), true);
     });
 
-    test('manually-entered Travel value on the Kilometers row survives later shifts', () {
+    // Section 7: Travel on the Kilometers row is ALWAYS recomputed as
+    // round(N x rate, 2) as the row shifts -- never just carried over. The
+    // template ships with G1 = 0.56, so a stray/manually-set E value must
+    // be overwritten by that computation on the very next shift, not
+    // preserved.
+    test('Travel on the Kilometers row is recomputed (not carried over) as it shifts', () {
+      engine.writeDrivingDetail(date: DateTime(2026, 8, 10), trip: 'Site A', km: 100);
       engine.writeReceipt(
         const ReceiptInput(date: null, description: null, subtotal: 45.99, gst: 2.30),
-        currentKmTotal: 0,
+        currentKmTotal: 100,
       );
-      // Kilometers row is now at 10; simulate the user filling Travel by hand.
-      sheet.cell(CellIndex.indexByString('E10')).value = const DoubleCellValue(12.0);
+      // Kilometers row is now at 10, Travel should be 100 * 0.56 = 56.
+      expect(numberOf(sheet.cell(CellIndex.indexByString('E10')).value), 56.0);
+
+      // Simulate a stray/manually-set value landing on the Kilometers row's
+      // Travel cell -- the next shift must overwrite it, not preserve it.
+      sheet.cell(CellIndex.indexByString('E10')).value = const DoubleCellValue(999.0);
 
       engine.writeReceipt(
         const ReceiptInput(date: null, description: null, subtotal: 12.00, gst: 0.60),
-        currentKmTotal: 0,
+        currentKmTotal: 100,
       );
 
       expect(engine.findKilometersRow(), 11);
-      expect(numberOf(sheet.cell(CellIndex.indexByString('E11')).value), 12.0);
+      expect(numberOf(sheet.cell(CellIndex.indexByString('E11')).value), 56.0,
+          reason: 'Travel must be recomputed from KM total x rate, not carried over from the stray E10 value');
       expect(numberOf(sheet.cell(CellIndex.indexByString('D9')).value), 12.00);
       expect(isEmptyCell(sheet.cell(CellIndex.indexByString('B10')).value), true);
     });
@@ -105,6 +118,99 @@ void main() {
       expect(engine.findKilometersRow(), 27, reason: 'no row should have moved on the rejected write');
       expect(isEmptyCell(sheet.cell(CellIndex.indexByString('D27')).value), true,
           reason: 'the rejected receipt must not have been written anywhere');
+    });
+
+    // Section 13.13: the write algorithm assumes the row(s) it's about to
+    // move into are empty (it's the only writer of the working file --
+    // section 1a). These fixtures force that assumption to fail, simulating
+    // an interrupted prior write or an algorithm bug, not a user edit.
+    group('occupied gap row', () {
+      test('first receipt (km row at 8): occupied row 9 blocks the write, nothing moves', () {
+        sheet.cell(CellIndex.indexByString('D9')).value = const DoubleCellValue(1);
+
+        expect(
+          () => engine.writeReceipt(const ReceiptInput(subtotal: 10, gst: 0.5), currentKmTotal: 0),
+          throwsA(isA<MileageReportRowOccupiedException>()),
+        );
+        expect(engine.findKilometersRow(), 8, reason: 'km row must not have moved');
+        expect(textOf(sheet.cell(CellIndex.indexByString('B8')).value), 'Kilometers (0)');
+      });
+
+      test('first receipt (km row at 8): occupied row 10 blocks the write, nothing moves', () {
+        sheet.cell(CellIndex.indexByString('K10')).value = const DoubleCellValue(1);
+
+        expect(
+          () => engine.writeReceipt(const ReceiptInput(subtotal: 10, gst: 0.5), currentKmTotal: 0),
+          throwsA(isA<MileageReportRowOccupiedException>()),
+        );
+        expect(engine.findKilometersRow(), 8, reason: 'km row must not have moved');
+      });
+
+      test('subsequent receipt: occupied gap row blocks the write, nothing moves', () {
+        engine.writeReceipt(const ReceiptInput(subtotal: 10, gst: 0.5), currentKmTotal: 0);
+        expect(engine.findKilometersRow(), 10);
+        // Row 9 is now the gap; corrupt it before the next write.
+        sheet.cell(CellIndex.indexByString('A9')).value = TextCellValue('unexpected');
+
+        expect(
+          () => engine.writeReceipt(const ReceiptInput(subtotal: 20, gst: 1), currentKmTotal: 0),
+          throwsA(isA<MileageReportRowOccupiedException>()),
+        );
+        expect(engine.findKilometersRow(), 10, reason: 'km row must not have moved on the rejected write');
+        expect(numberOf(sheet.cell(CellIndex.indexByString('D9')).value), isNot(20),
+            reason: 'the rejected receipt must not have been written into the occupied gap row');
+      });
+    });
+
+    test('more than one "Kilometers (" row is a blocking structure error, not a silent pick', () {
+      // Simulate corruption: a second row that also looks like the
+      // Kilometers marker (section 13.1a) -- this should never happen
+      // through normal app use (the app is the only writer, section 1a).
+      sheet.cell(CellIndex.indexByString('B15')).value = TextCellValue('Kilometers (999)');
+
+      expect(
+        () => engine.findKilometersRow(),
+        throwsA(isA<MileageReportStructureException>()),
+      );
+      expect(
+        () => engine.writeReceipt(const ReceiptInput(subtotal: 10, gst: 0.5), currentKmTotal: 0),
+        throwsA(isA<MileageReportStructureException>()),
+      );
+    });
+
+    // Section 13.17: a value with a long decimal tail must land in the file
+    // rounded to 2 places -- otherwise the cell's #,##0.00 display and the
+    // stored value silently disagree.
+    test('a long decimal tail on Subtotal/GST/KM is rounded to 2 places before it reaches the file', () {
+      engine.writeReceipt(
+        const ReceiptInput(subtotal: 12.3456, gst: 0.6789),
+        currentKmTotal: 0,
+      );
+      expect(numberOf(sheet.cell(CellIndex.indexByString('D8')).value), 12.35);
+      expect(numberOf(sheet.cell(CellIndex.indexByString('K8')).value), 0.68);
+
+      engine.writeDrivingDetail(date: DateTime(2026, 8, 10), trip: 'Site A', km: 42.5678);
+      final drivingSheet = engine.excel.sheets['Driving Details']!;
+      expect(numberOf(drivingSheet.cell(CellIndex.indexByString('C2')).value), 42.57);
+    });
+
+    // Section 8: any human-typed text (Description, Trip, employee name,
+    // STAT holiday name, ...) must be stored as literal text even if it
+    // starts with =, +, -, or @ -- those are the characters Excel treats as
+    // "this cell is a formula" on values typed directly into the grid. The
+    // app never types into the grid; it always goes through TextCellValue,
+    // which tags the cell's type explicitly rather than sniffing the first
+    // character, so this must hold regardless of content.
+    test('a Description starting with "=" is stored as text, not turned into a formula', () {
+      engine.writeReceipt(
+        const ReceiptInput(description: '=SUM(A1:A2)', subtotal: 10, gst: 0.5),
+        currentKmTotal: 0,
+      );
+
+      final roundTripped = MileageReportEngine.fromBytes(engine.save()).excel.sheets['Truman Homes']!;
+      final value = roundTripped.cell(CellIndex.indexByString('B8')).value;
+      expect(value, isA<TextCellValue>());
+      expect(textOf(value), '=SUM(A1:A2)');
     });
 
     test('receipt and driving-detail cells keep the template border/font/number_format after being written', () {
@@ -158,7 +264,9 @@ void main() {
       final outFile = File('build/verify_output/MileageReport_test.xlsx')..createSync(recursive: true);
       outFile.writeAsBytesSync(newBytes);
 
-      final report = checkMileageReportIntegrity(newBytes: newBytes, template: Excel.decodeBytes(originalBytes));
+      final report = checkMileageReportIntegrity(
+          newBytes: newBytes,
+          template: Excel.decodeBytes(normalizeXlsxRelationshipTargets(Uint8List.fromList(originalBytes))));
       expect(report.ok, true, reason: report.issues.join('; '));
       expect(report.styleWarnings, isEmpty, reason: report.styleWarnings.join('; '));
 
@@ -237,6 +345,29 @@ void main() {
         expectedTotal += numberOf(sheet.cell(CellIndex.indexByColumnRow(columnIndex: 7, rowIndex: row - 1)).value) ?? 0;
       }
       expect(numberOf(sheet.cell(CellIndex.indexByString('H39')).value), expectedTotal);
+    });
+
+    test('clearing a day blanks C-H and recomputes H39, leaving Item#/Date alone', () {
+      engine.writeDay(
+        9,
+        const TimesheetDayInput(
+          start: TimeOfDay(hour: 8, minute: 0),
+          lunchStart: TimeOfDay(hour: 12, minute: 0),
+          lunchEnd: TimeOfDay(hour: 12, minute: 30),
+          finish: TimeOfDay(hour: 16, minute: 45),
+        ),
+      );
+      final totalBeforeClear = numberOf(sheet.cell(CellIndex.indexByString('H39')).value)!;
+
+      engine.clearDay(9);
+
+      for (final col in ['C', 'D', 'E', 'F', 'G', 'H']) {
+        expect(isEmptyCell(sheet.cell(CellIndex.indexByString('${col}9')).value), true, reason: '${col}9 should be blank');
+      }
+      // Item# and Date are section 10's "not the app's to clear" columns.
+      expect(numberOf(sheet.cell(CellIndex.indexByString('A9')).value), 2);
+      expect(sheet.cell(CellIndex.indexByString('B9')).value, isNotNull);
+      expect(numberOf(sheet.cell(CellIndex.indexByString('H39')).value), totalBeforeClear - 8.25);
     });
 
     test('written day and header cells keep the template border/font/number_format', () {

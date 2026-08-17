@@ -2,7 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../l10n/app_strings.dart';
 import '../models/payroll_period.dart';
+import '../services/period_file_manager.dart';
 import '../services/period_repository.dart';
+import '../services/safe_xlsx_write.dart';
+import '../services/settings_repository.dart';
+import '../utils/number_input.dart';
+import '../xlsx/mileage_report_engine.dart';
 
 /// The manual "add / edit period" form (section 5). Used both from Settings
 /// and as a blocking flow when the user has run past the last known period.
@@ -10,6 +15,11 @@ class AddPeriodScreen extends StatefulWidget {
   final PayrollPeriod? existing;
   final (DateTime, DateTime)? suggestedRange;
   final bool blocking;
+
+  /// Every other known period (section 5: a new/edited period must not
+  /// overlap any of them). Includes [existing] itself when editing --
+  /// [_validate] excludes it from the overlap check by key.
+  final List<PayrollPeriod> existingPeriods;
 
   /// Called after a successful save. Required when this screen is embedded
   /// directly as a body (the blocking home-screen flow) rather than pushed
@@ -21,6 +31,7 @@ class AddPeriodScreen extends StatefulWidget {
     this.existing,
     this.suggestedRange,
     this.blocking = false,
+    required this.existingPeriods,
     this.onSaved,
   });
 
@@ -37,6 +48,7 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
   DateTime? _weekendAltDueDate;
   TimeOfDay _weekendAltDueTime = const TimeOfDay(hour: 8, minute: 30);
   final List<_StatHolidayRow> _statHolidays = [];
+  final _kmRateController = TextEditingController();
   String? _error;
   bool _saving = false;
 
@@ -58,6 +70,9 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
       for (final h in existing.statHolidays) {
         _statHolidays.add(_StatHolidayRow(name: h.name, date: h.date));
       }
+      // Blank is legal here (section 5) and means "no rate of its own --
+      // use the Settings default" -- unlike Settings' own rate field.
+      _kmRateController.text = existing.kmRate?.toString() ?? '';
     } else {
       final suggested = widget.suggestedRange;
       _start = suggested?.$1 ?? DateTime.now();
@@ -65,6 +80,12 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
       _dueDate = _end;
       _dueTime = const TimeOfDay(hour: 16, minute: 30);
     }
+  }
+
+  @override
+  void dispose() {
+    _kmRateController.dispose();
+    super.dispose();
   }
 
   Future<void> _pickDate(DateTime initial, void Function(DateTime) onPicked) async {
@@ -93,20 +114,69 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
 
   String? _validate() {
     if (_end.isBefore(_start)) return t(context, 'addPeriod.errorEndBeforeStart');
-    final dueDay = DateTime(_dueDateTime.year, _dueDateTime.month, _dueDateTime.day);
+
     final startDay = DateTime(_start.year, _start.month, _start.day);
     final endDay = DateTime(_end.year, _end.month, _end.day);
+
+    // Section 5: real periods run 15-16 days; this only catches a date typo
+    // off by a month/year, not a limit on the employer's own schedule.
+    final lengthDays = endDay.difference(startDay).inDays + 1;
+    if (lengthDays < 7 || lengthDays > 40) {
+      return t(context, 'addPeriod.errorLength');
+    }
+
+    final dueDay = DateTime(_dueDateTime.year, _dueDateTime.month, _dueDateTime.day);
     if (dueDay.isBefore(startDay) || dueDay.isAfter(endDay)) {
       return t(context, 'addPeriod.errorDueOutOfRange');
     }
+
+    final statDates = <DateTime>{};
     for (final h in _statHolidays) {
       if (h.date == null || h.name.trim().isEmpty) return t(context, 'addPeriod.errorStatIncomplete');
       final d = DateTime(h.date!.year, h.date!.month, h.date!.day);
       if (d.isBefore(startDay) || d.isAfter(endDay)) {
         return t(context, 'addPeriod.errorStatOutOfRange', {'name': h.name});
       }
+      if (!statDates.add(d)) {
+        // Two STAT rows on the same date is a typo (duplicate entry), not
+        // two holidays landing on the same day.
+        return t(context, 'addPeriod.errorStatDuplicate');
+      }
     }
+
+    // Section 5: a new/edited period must not overlap any existing one --
+    // a gap between periods is fine (they may be added out of order), only
+    // overlap is blocked. Excludes the period being edited itself by key.
+    for (final other in widget.existingPeriods) {
+      if (widget.existing != null && other.key == widget.existing!.key) continue;
+      final otherStart = DateTime(other.start.year, other.start.month, other.start.day);
+      final otherEnd = DateTime(other.end.year, other.end.month, other.end.day);
+      final overlaps = !endDay.isBefore(otherStart) && !otherEnd.isBefore(startDay);
+      if (overlaps) {
+        return t(context, 'addPeriod.errorOverlap');
+      }
+    }
+
+    // Section 5: blank is legal here (means "use the Settings default") --
+    // unlike Settings' own rate field, only a non-blank value is checked
+    // for being > 0.
+    final rateText = _kmRateController.text.trim();
+    if (rateText.isNotEmpty) {
+      final rate = parseDecimal(rateText);
+      if (rate == null || rate <= 0) {
+        return t(context, 'addPeriod.errorKmRate');
+      }
+    }
+
     return null;
+  }
+
+  /// The rate to save for this period: null if the field was left blank
+  /// (section 5), otherwise the parsed value. Only call after [_validate]
+  /// has confirmed the field is either blank or a valid positive number.
+  double? get _kmRate {
+    final rateText = _kmRateController.text.trim();
+    return rateText.isEmpty ? null : parseDecimal(rateText);
   }
 
   Future<void> _save() async {
@@ -129,6 +199,7 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
       statHolidays: _statHolidays
           .map((h) => StatHoliday(name: h.name.trim(), date: h.date!))
           .toList(),
+      kmRate: _kmRate,
     );
 
     final repo = PeriodRepository();
@@ -136,6 +207,26 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
       await repo.updatePeriod(period);
     } else {
       await repo.addPeriod(period);
+    }
+
+    // Section 6.2, second rate-change path: editing an existing period's
+    // own rate field updates G1 + Travel in THAT period's file specifically
+    // (including an archival one) -- distinct from the Settings-default
+    // path (settings_screen.dart), which only ever touches the current
+    // period. A cleared field (back to "use the default") still needs G1
+    // updated -- otherwise it would keep whatever explicit rate was there
+    // before, permanently, since a filled G1 is normally authoritative.
+    final oldRate = widget.existing?.kmRate;
+    final newRate = period.kmRate;
+    final rateChanged = widget.existing != null &&
+        ((oldRate == null) != (newRate == null) ||
+            (oldRate != null && newRate != null && !MileageReportEngine.ratesEqual(oldRate, newRate)));
+    if (rateChanged) {
+      final file = await PeriodFileManager().mileageReportFile(period);
+      if (await file.exists()) {
+        final effectiveRate = newRate ?? (await SettingsRepository().load()).kmRate;
+        await changeMileagePeriodRate(file, newRate: effectiveRate);
+      }
     }
 
     if (!mounted) return;
@@ -226,6 +317,17 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
               ],
             ),
             for (var i = 0; i < _statHolidays.length; i++) _buildStatHolidayRow(i, dateFmt),
+            const Divider(),
+            Text(t(context, 'addPeriod.kmRate'), style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _kmRateController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: t(context, 'addPeriod.kmRateLabel'),
+                hintText: t(context, 'addPeriod.kmRateHint'),
+              ),
+            ),
             const SizedBox(height: 24),
             FilledButton(
               onPressed: _saving ? null : _save,

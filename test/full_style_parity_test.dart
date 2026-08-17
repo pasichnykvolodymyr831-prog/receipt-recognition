@@ -35,6 +35,7 @@ import 'package:expenseflow/models/payroll_period.dart';
 import 'package:expenseflow/services/safe_xlsx_write.dart';
 import 'package:expenseflow/xlsx/managed_cells.dart';
 import 'package:expenseflow/xlsx/mileage_report_engine.dart';
+import 'package:expenseflow/xlsx/xlsx_rels_compat.dart';
 
 class _FakePathProviderPlatform extends PathProviderPlatform {
   _FakePathProviderPlatform(this._docsPath);
@@ -114,9 +115,24 @@ void main() {
       periodLabel: 'Aug 9 - Aug 23, 2026',
       employeeName: 'Truman Homes',
       periodEnd: DateTime(2026, 8, 23),
+      kmRate: 0.56,
     );
-    await saveMileageDrivingDetail(file, date: DateTime(2026, 8, 10), trip: 'Site A to Site B', km: 42.5);
-    await saveMileageDrivingDetail(file, date: DateTime(2026, 8, 12), trip: 'Site C', km: 10);
+    await saveMileageDrivingDetail(
+      file,
+      date: DateTime(2026, 8, 10),
+      trip: 'Site A to Site B',
+      km: 42.5,
+      periodKmRate: null,
+      settingsDefaultRate: 0.56,
+    );
+    await saveMileageDrivingDetail(
+      file,
+      date: DateTime(2026, 8, 12),
+      trip: 'Site C',
+      km: 10,
+      periodKmRate: null,
+      settingsDefaultRate: 0.56,
+    );
     await saveMileageReceipt(
       file,
       ReceiptInput(
@@ -125,11 +141,18 @@ void main() {
         subtotal: 45.99,
         gst: 2.30,
       ),
+      periodKmRate: null,
+      settingsDefaultRate: 0.56,
     );
-    await saveMileageReceipt(file, const ReceiptInput(date: null, description: null, subtotal: 12.5, gst: 0.63));
+    await saveMileageReceipt(
+      file,
+      const ReceiptInput(date: null, description: null, subtotal: 12.5, gst: 0.63),
+      periodKmRate: null,
+      settingsDefaultRate: 0.56,
+    );
 
     final result = Excel.decodeBytes(await file.readAsBytes());
-    final template = Excel.decodeBytes(originalBytes);
+    final template = Excel.decodeBytes(normalizeXlsxRelationshipTargets(originalBytes));
     final mismatches = _allCellStyleMismatches(result, template, [...mileageVisibleSheets, ...mileageHiddenSheets]);
 
     expect(mismatches, isEmpty, reason: 'style mismatches remaining after full-sheet healing: $mismatches');
@@ -159,7 +182,7 @@ void main() {
     );
 
     final result = Excel.decodeBytes(await file.readAsBytes());
-    final template = Excel.decodeBytes(originalBytes);
+    final template = Excel.decodeBytes(normalizeXlsxRelationshipTargets(originalBytes));
     // Timesheet's own number_format exception (section 13.2's documented
     // one): Start/Lunch/Finish are written as text ("8am", "1200-1230")
     // into cells the template formats as time -- excluded the same way

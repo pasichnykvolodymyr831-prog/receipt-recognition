@@ -36,6 +36,13 @@ class PayrollPeriod {
   final DateTime? weekendAltDue;
   final List<StatHoliday> statHolidays;
 
+  /// This period's own $/km rate (section 6.2), fixed at the value that
+  /// applied when the period was created or last explicitly edited. `null`
+  /// means "no rate of its own -- use the Settings default" (section 5: a
+  /// blank rate field in the period form is legal and means exactly this,
+  /// unlike Settings' own rate field, which is required and must be > 0).
+  final double? kmRate;
+
   const PayrollPeriod({
     required this.key,
     required this.start,
@@ -43,6 +50,7 @@ class PayrollPeriod {
     required this.due,
     this.weekendAltDue,
     this.statHolidays = const [],
+    this.kmRate,
   });
 
   /// Identifier used for xlsx file naming (section 5): `<start>_<end>`.
@@ -66,6 +74,10 @@ class PayrollPeriod {
       statHolidays: (json['stat_holidays'] as List<dynamic>? ?? [])
           .map((e) => StatHoliday.fromJson(e as Map<String, dynamic>))
           .toList(),
+      // Section 4's safe-default principle: periods saved before this field
+      // existed simply don't have it -- null (-> use the Settings default)
+      // is exactly the right fallback, not a migration to run.
+      kmRate: (json['km_rate'] as num?)?.toDouble(),
     );
   }
 
@@ -76,6 +88,7 @@ class PayrollPeriod {
         'due': due.toIso8601String(),
         'weekend_alt_due': weekendAltDue?.toIso8601String(),
         'stat_holidays': statHolidays.map((e) => e.toJson()).toList(),
+        'km_rate': kmRate,
       };
 
   bool containsDate(DateTime date) {
@@ -96,6 +109,8 @@ class PayrollPeriod {
     DateTime? weekendAltDue,
     bool clearWeekendAltDue = false,
     List<StatHoliday>? statHolidays,
+    double? kmRate,
+    bool clearKmRate = false,
   }) {
     return PayrollPeriod(
       key: key,
@@ -105,6 +120,7 @@ class PayrollPeriod {
       weekendAltDue:
           clearWeekendAltDue ? null : (weekendAltDue ?? this.weekendAltDue),
       statHolidays: statHolidays ?? this.statHolidays,
+      kmRate: clearKmRate ? null : (kmRate ?? this.kmRate),
     );
   }
 }

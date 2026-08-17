@@ -65,6 +65,9 @@ class PeriodFileManager {
         periodLabel: periodLabel(period),
         employeeName: settings.fullName,
         periodEnd: period.end,
+        // Section 6.2, case 1 (file doesn't exist yet): period.kmRate, or
+        // the Settings default if this period has none of its own.
+        kmRate: period.kmRate ?? settings.kmRate,
       );
     }
 

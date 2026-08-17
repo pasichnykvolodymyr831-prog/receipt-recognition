@@ -73,6 +73,28 @@ const Map<String, Map<String, String>> _strings = {
     'en': 'STAT holiday "{name}" must fall within the period.',
     'ru': 'STAT-праздник «{name}» должен попадать в период.',
   },
+  'addPeriod.errorStatDuplicate': {
+    'en': 'Two STAT holidays have the same date -- check for a typo.',
+    'ru': 'Два STAT-праздника указаны на одну и ту же дату — проверьте, нет ли опечатки.',
+  },
+  'addPeriod.errorLength': {
+    'en': 'Period length looks off (must be 7-40 days) -- check the dates.',
+    'ru': 'Длина периода выглядит неправильной (должна быть 7–40 дней) — проверьте даты.',
+  },
+  'addPeriod.errorOverlap': {
+    'en': 'This period overlaps an existing one -- check the dates.',
+    'ru': 'Этот период пересекается с уже существующим — проверьте даты.',
+  },
+  'addPeriod.kmRate': {'en': r'Rate ($/km)', 'ru': r'Ставка ($/км)'},
+  'addPeriod.kmRateLabel': {'en': 'Rate (optional)', 'ru': 'Ставка (необязательно)'},
+  'addPeriod.kmRateHint': {
+    'en': 'Leave blank to use the Settings default',
+    'ru': 'Оставьте пустым, чтобы использовать умолчание из Настроек',
+  },
+  'addPeriod.errorKmRate': {
+    'en': 'Rate must be greater than zero, or left blank.',
+    'ru': 'Ставка должна быть больше нуля либо оставлена пустой.',
+  },
 
   'addReceipt.title': {'en': 'Add receipt', 'ru': 'Добавить чек'},
   'addReceipt.camera': {'en': 'Camera', 'ru': 'Камера'},
@@ -86,6 +108,9 @@ const Map<String, Map<String, String>> _strings = {
     'en': 'GST looks unusually far from 5% of Subtotal -- double check it.',
     'ru': 'GST заметно отличается от 5% суммы — проверьте значение.',
   },
+  'addReceipt.dateRequired': {'en': 'Date is required.', 'ru': 'Укажите дату.'},
+  'addReceipt.subtotalRequired': {'en': 'Subtotal is required.', 'ru': 'Укажите сумму без налога.'},
+  'addReceipt.gstRequired': {'en': 'GST is required.', 'ru': 'Укажите GST.'},
   'addReceipt.noRoomTitle': {'en': 'No room left', 'ru': 'Нет свободных строк'},
   'addReceipt.noRoomContent': {
     'en': "This period's Mileage Report is full. Please add the remaining receipts directly in Excel.",
@@ -98,6 +123,11 @@ const Map<String, Map<String, String>> _strings = {
   'drivingDetails.trip': {'en': 'Trip', 'ru': 'Маршрут'},
   'drivingDetails.km': {'en': 'KM', 'ru': 'Км'},
   'drivingDetails.invalidKm': {'en': 'Enter a valid KM value.', 'ru': 'Введите корректное значение км.'},
+  'drivingDetails.tripRequired': {'en': 'Trip is required.', 'ru': 'Укажите маршрут.'},
+  'drivingDetails.kmMustBePositive': {
+    'en': 'KM must be greater than zero.',
+    'ru': 'Километраж должен быть больше нуля.',
+  },
   'drivingDetails.noRoomContent': {
     'en': 'Driving Details is full for this period. Please add further trips directly in Excel.',
     'ru': 'Driving Details заполнен для этого периода. Добавьте новые поездки прямо в Excel.',
@@ -113,6 +143,15 @@ const Map<String, Map<String, String>> _strings = {
   'timesheet.coffeeBreak': {'en': 'Coffee Break', 'ru': 'Кофе-брейк'},
   'timesheet.finishTime': {'en': 'Finish Time', 'ru': 'Конец смены'},
   'timesheet.hours': {'en': 'Hours', 'ru': 'Часы'},
+  'timesheet.clearDay': {'en': 'Clear day', 'ru': 'Очистить день'},
+  'timesheet.errorNonPositiveHours': {
+    'en': 'Hours worked can\'t be zero or negative -- check Start, Finish, and the breaks.',
+    'ru': 'Часы за день не могут быть нулевыми или отрицательными — проверьте начало, конец смены и перерывы.',
+  },
+  'timesheet.errorMidnightCrossing': {
+    'en': 'A shift crossing midnight isn\'t supported in one row. Split it into two entries: one ending before midnight, one starting after.',
+    'ru': 'Смена через полночь не поддерживается одной строкой. Разбейте её на две записи: одна до полуночи, другая после.',
+  },
 
   'settings.title': {'en': 'Settings', 'ru': 'Настройки'},
   'settings.language': {'en': 'Language', 'ru': 'Язык'},
@@ -122,6 +161,13 @@ const Map<String, Map<String, String>> _strings = {
   'settings.firstName': {'en': 'First name', 'ru': 'Имя'},
   'settings.lastName': {'en': 'Last name', 'ru': 'Фамилия'},
   'settings.phone': {'en': 'Phone', 'ru': 'Телефон'},
+  'settings.kmRateTitle': {'en': r'Rate ($/km)', 'ru': r'Ставка ($/км)'},
+  'settings.kmRateLabel': {'en': 'Rate', 'ru': 'Ставка'},
+  'settings.kmRateRequired': {'en': 'Rate is required.', 'ru': 'Укажите ставку.'},
+  'settings.kmRateMustBePositive': {
+    'en': 'Rate must be greater than zero.',
+    'ru': 'Ставка должна быть больше нуля.',
+  },
   'settings.retentionTitle': {'en': 'Keep previous Excel files', 'ru': 'Хранение предыдущих Excel-файлов'},
   'settings.retentionNever': {'en': 'Never keep', 'ru': 'Никогда не хранить'},
   'settings.retentionOneMonth': {'en': 'Keep last month', 'ru': 'Хранить последний месяц'},

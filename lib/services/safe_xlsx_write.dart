@@ -64,6 +64,21 @@ class XlsxIntegrityException implements Exception {
 
 final _backupManager = BackupManager();
 
+/// Replaces [target]'s content with [bytes] atomically (section 13, step 8):
+/// write to a sibling temp file first, then rename it over [target]. A
+/// rename within the same filesystem either completes wholly or not at all,
+/// so a crash/kill mid-write (battery, force-close) always leaves [target]
+/// as either the old version or the new one -- never truncated/corrupt.
+/// Must NOT be implemented as delete-then-write: that has a window where
+/// [target] doesn't exist at all. The `.tmp` suffix deliberately doesn't end
+/// in `.xlsx`, so it can never match the period-file search pattern (section
+/// 5) and be mistaken for a second candidate file.
+Future<void> _atomicWrite(File target, Uint8List bytes) async {
+  final tmp = File('${target.path}.tmp');
+  await tmp.writeAsBytes(bytes, flush: true);
+  await tmp.rename(target.path);
+}
+
 Uint8List? _mileageTemplateBytesCache;
 Future<Uint8List> _mileageTemplateBytes() async {
   return _mileageTemplateBytesCache ??= (await rootBundle.load(mileageReportTemplateAsset)).buffer.asUint8List();
@@ -90,19 +105,40 @@ class _CreateMileagePeriod extends _MileageOp {
   final String periodLabel;
   final String employeeName;
   final DateTime periodEnd;
-  const _CreateMileagePeriod({required this.periodLabel, required this.employeeName, required this.periodEnd});
+  final double kmRate;
+  const _CreateMileagePeriod({
+    required this.periodLabel,
+    required this.employeeName,
+    required this.periodEnd,
+    required this.kmRate,
+  });
 }
 
 class _WriteReceiptOp extends _MileageOp {
   final ReceiptInput receipt;
-  const _WriteReceiptOp(this.receipt);
+  final double? periodKmRate;
+  final double settingsDefaultRate;
+  const _WriteReceiptOp(this.receipt, {required this.periodKmRate, required this.settingsDefaultRate});
 }
 
 class _WriteDrivingDetailOp extends _MileageOp {
   final DateTime date;
   final String trip;
   final double km;
-  const _WriteDrivingDetailOp({required this.date, required this.trip, required this.km});
+  final double? periodKmRate;
+  final double settingsDefaultRate;
+  const _WriteDrivingDetailOp({
+    required this.date,
+    required this.trip,
+    required this.km,
+    required this.periodKmRate,
+    required this.settingsDefaultRate,
+  });
+}
+
+class _ChangeRateOp extends _MileageOp {
+  final double newRate;
+  const _ChangeRateOp(this.newRate);
 }
 
 class _MileageRequest {
@@ -127,13 +163,29 @@ void _mileageIsolateEntry(_MileageRequest req) {
     final engine = MileageReportEngine.fromBytes(sourceBytes);
     switch (req.op) {
       case _CreateMileagePeriod o:
+        // Section 7, "Инициализация нового периода": G1 must be written
+        // BEFORE row 8, so writeRate always comes first here.
+        engine.writeRate(o.kmRate);
         engine.writePeriodHeader(periodLabel: o.periodLabel, employeeName: o.employeeName);
         engine.initializeKilometersRow(periodEnd: o.periodEnd);
       case _WriteReceiptOp o:
         final kmTotal = engine.sumDrivingDetailsKm();
-        engine.writeReceipt(o.receipt, currentKmTotal: kmTotal);
+        engine.writeReceipt(
+          o.receipt,
+          currentKmTotal: kmTotal,
+          periodKmRate: o.periodKmRate,
+          settingsDefaultRate: o.settingsDefaultRate,
+        );
       case _WriteDrivingDetailOp o:
-        engine.writeDrivingDetail(date: o.date, trip: o.trip, km: o.km);
+        engine.writeDrivingDetail(
+          date: o.date,
+          trip: o.trip,
+          km: o.km,
+          periodKmRate: o.periodKmRate,
+          settingsDefaultRate: o.settingsDefaultRate,
+        );
+      case _ChangeRateOp o:
+        engine.changeRate(o.newRate);
     }
 
     req.replyPort.send(SaveXlsxPhase.writing);
@@ -222,6 +274,7 @@ Future<void> createMileagePeriod(
   required String periodLabel,
   required String employeeName,
   required DateTime periodEnd,
+  required double kmRate,
   void Function(SaveXlsxPhase)? onPhase,
 }) async {
   onPhase?.call(SaveXlsxPhase.reading);
@@ -230,20 +283,32 @@ Future<void> createMileagePeriod(
     sourceBytes: templateBytes,
     templateBytes: templateBytes,
     healHiddenSheets: true,
-    op: _CreateMileagePeriod(periodLabel: periodLabel, employeeName: employeeName, periodEnd: periodEnd),
+    op: _CreateMileagePeriod(
+      periodLabel: periodLabel,
+      employeeName: employeeName,
+      periodEnd: periodEnd,
+      kmRate: kmRate,
+    ),
     onPhase: onPhase,
   );
   await logStyleWarnings('createMileagePeriod', file.uri.pathSegments.last, result.styleWarnings);
-  await file.writeAsBytes(result.bytes);
+  await _atomicWrite(file, result.bytes);
 }
 
 /// Adds a receipt to [file]'s Mileage Report (section 7/8). Throws
 /// [MileageReportStructureException] if the file was hand-edited outside
 /// the app, [MileageReportRowsExhaustedException] if there's no room left,
 /// or [XlsxIntegrityException] if the healed result fails verification.
+///
+/// [periodKmRate]/[settingsDefaultRate] resolve the rate for the
+/// Kilometers row's Travel per section 6.2's priority rule -- pass
+/// `period.kmRate` and the current Settings default respectively; the file
+/// itself is still authoritative if its own `G1` is already filled.
 Future<void> saveMileageReceipt(
   File file,
   ReceiptInput receipt, {
+  required double? periodKmRate,
+  required double settingsDefaultRate,
   void Function(SaveXlsxPhase)? onPhase,
 }) async {
   onPhase?.call(SaveXlsxPhase.reading);
@@ -254,20 +319,23 @@ Future<void> saveMileageReceipt(
     sourceBytes: sourceBytes,
     templateBytes: templateBytes,
     healHiddenSheets: false,
-    op: _WriteReceiptOp(receipt),
+    op: _WriteReceiptOp(receipt, periodKmRate: periodKmRate, settingsDefaultRate: settingsDefaultRate),
     onPhase: onPhase,
   );
   await logStyleWarnings('saveMileageReceipt', file.uri.pathSegments.last, result.styleWarnings);
-  await file.writeAsBytes(result.bytes);
+  await _atomicWrite(file, result.bytes);
 }
 
 /// Adds a trip to [file]'s Driving Details sheet and recalculates the
-/// Kilometers row (section 7/9). Same exceptions as [saveMileageReceipt].
+/// Kilometers row (section 7/9). Same exceptions as [saveMileageReceipt];
+/// see it for [periodKmRate]/[settingsDefaultRate].
 Future<void> saveMileageDrivingDetail(
   File file, {
   required DateTime date,
   required String trip,
   required double km,
+  required double? periodKmRate,
+  required double settingsDefaultRate,
   void Function(SaveXlsxPhase)? onPhase,
 }) async {
   onPhase?.call(SaveXlsxPhase.reading);
@@ -278,11 +346,43 @@ Future<void> saveMileageDrivingDetail(
     sourceBytes: sourceBytes,
     templateBytes: templateBytes,
     healHiddenSheets: false,
-    op: _WriteDrivingDetailOp(date: date, trip: trip, km: km),
+    op: _WriteDrivingDetailOp(
+      date: date,
+      trip: trip,
+      km: km,
+      periodKmRate: periodKmRate,
+      settingsDefaultRate: settingsDefaultRate,
+    ),
     onPhase: onPhase,
   );
   await logStyleWarnings('saveMileageDrivingDetail', file.uri.pathSegments.last, result.styleWarnings);
-  await file.writeAsBytes(result.bytes);
+  await _atomicWrite(file, result.bytes);
+}
+
+/// Changes a period file's $/km rate explicitly (section 6.2): writes `G1`
+/// and recomputes the Kilometers row's Travel together, as one operation.
+/// Used by both rate-change paths -- the Settings default (against the
+/// calendar-current period's file) and the period form's own rate field
+/// (against that specific period's file, archival or not) -- the caller
+/// picks which file to target.
+Future<void> changeMileagePeriodRate(
+  File file, {
+  required double newRate,
+  void Function(SaveXlsxPhase)? onPhase,
+}) async {
+  onPhase?.call(SaveXlsxPhase.reading);
+  final sourceBytes = await file.readAsBytes();
+  final templateBytes = await _mileageTemplateBytes();
+  await _backupManager.backupBeforeWrite(file);
+  final result = await _runMileageIsolate(
+    sourceBytes: sourceBytes,
+    templateBytes: templateBytes,
+    healHiddenSheets: false,
+    op: _ChangeRateOp(newRate),
+    onPhase: onPhase,
+  );
+  await logStyleWarnings('changeMileagePeriodRate', file.uri.pathSegments.last, result.styleWarnings);
+  await _atomicWrite(file, result.bytes);
 }
 
 // ===================== Timesheet =====================
@@ -316,6 +416,11 @@ class _WriteTimesheetDayOp extends _TimesheetOp {
   const _WriteTimesheetDayOp(this.row, this.input);
 }
 
+class _ClearTimesheetDayOp extends _TimesheetOp {
+  final int row;
+  const _ClearTimesheetDayOp(this.row);
+}
+
 class _TimesheetRequest {
   final Uint8List sourceBytes;
   final Uint8List templateBytes;
@@ -340,6 +445,8 @@ void _timesheetIsolateEntry(_TimesheetRequest req) {
         engine.autoFillPeriod(o.period);
       case _WriteTimesheetDayOp o:
         engine.writeDay(o.row, o.input);
+      case _ClearTimesheetDayOp o:
+        engine.clearDay(o.row);
     }
 
     req.replyPort.send(SaveXlsxPhase.writing);
@@ -429,7 +536,7 @@ Future<void> createTimesheetPeriod(
     onPhase: onPhase,
   );
   await logStyleWarnings('createTimesheetPeriod', file.uri.pathSegments.last, result.styleWarnings);
-  await file.writeAsBytes(result.bytes);
+  await _atomicWrite(file, result.bytes);
 }
 
 /// Writes one day's edited times to [file]'s Timesheet (section 10) and
@@ -452,7 +559,31 @@ Future<Uint8List> saveTimesheetDay(
     onPhase: onPhase,
   );
   await logStyleWarnings('saveTimesheetDay', file.uri.pathSegments.last, result.styleWarnings);
-  await file.writeAsBytes(result.bytes);
+  await _atomicWrite(file, result.bytes);
+  return result.bytes;
+}
+
+/// Clears one day's Start/Lunch/Coffee/Finish/Hours/Total (section 10) --
+/// marks the day as not worked. A legitimate action distinct from
+/// [saveTimesheetDay]'s validation of a filled-in day; the day is simply
+/// blanked, not deleted (Item#/Date in columns A/B are untouched).
+Future<Uint8List> clearTimesheetDay(
+  File file, {
+  required int row,
+  void Function(SaveXlsxPhase)? onPhase,
+}) async {
+  onPhase?.call(SaveXlsxPhase.reading);
+  final sourceBytes = await file.readAsBytes();
+  final templateBytes = await _timesheetTemplateBytes();
+  await _backupManager.backupBeforeWrite(file);
+  final result = await _runTimesheetIsolate(
+    sourceBytes: sourceBytes,
+    templateBytes: templateBytes,
+    op: _ClearTimesheetDayOp(row),
+    onPhase: onPhase,
+  );
+  await logStyleWarnings('clearTimesheetDay', file.uri.pathSegments.last, result.styleWarnings);
+  await _atomicWrite(file, result.bytes);
   return result.bytes;
 }
 

@@ -68,6 +68,7 @@ class _HomeScreenState extends State<HomeScreen> {
             return AddPeriodScreen(
               blocking: true,
               suggestedRange: _startup.suggestNextPeriodRange(data.allPeriods),
+              existingPeriods: data.allPeriods,
               onSaved: (_) => _reload(),
             );
           }

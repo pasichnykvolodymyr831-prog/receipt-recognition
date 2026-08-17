@@ -4,6 +4,9 @@ import '../l10n/app_strings.dart';
 import '../models/payroll_period.dart';
 import '../services/period_file_manager.dart';
 import '../services/safe_xlsx_write.dart';
+import '../services/settings_repository.dart';
+import '../utils/number_input.dart';
+import '../utils/text_input.dart';
 import '../xlsx/mileage_report_engine.dart';
 
 /// Manual Driving Details entry (section 9): Date, Trip, KM. Writes to the
@@ -24,6 +27,10 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
   bool _busy = false;
   SaveXlsxPhase? _savePhase;
 
+  // Section 9: Trip is required, KM must be strictly > 0.
+  String? _tripError;
+  String? _kmError;
+
   @override
   void dispose() {
     _tripController.dispose();
@@ -41,15 +48,32 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
     if (picked != null) setState(() => _date = picked);
   }
 
+  /// Section 9: Trip is required (free text, no autocomplete); KM must be
+  /// strictly greater than zero (a zero/negative trip is almost certainly a
+  /// typo, and there's no meaningful upper bound to enforce).
+  bool _validate() {
+    final trip = sanitizeFreeText(_tripController.text);
+    final km = parseDecimal(_kmController.text);
+
+    final tripError = trip.isEmpty ? t(context, 'drivingDetails.tripRequired') : null;
+    final kmError = km == null
+        ? t(context, 'drivingDetails.invalidKm')
+        : (km <= 0 ? t(context, 'drivingDetails.kmMustBePositive') : null);
+
+    setState(() {
+      _tripError = tripError;
+      _kmError = kmError;
+    });
+    return tripError == null && kmError == null;
+  }
+
   Future<void> _save() async {
     if (_busy) return; // guards against a second tap starting a concurrent write
-    final km = double.tryParse(_kmController.text.trim());
-    if (km == null) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(t(context, 'drivingDetails.invalidKm'))));
-      return;
-    }
-    final trip = _tripController.text.trim();
+    if (!_validate()) return;
+    // Section 9: round to 2 decimals here -- a typed "42.567" must never
+    // reach the file as anything longer than 42.57.
+    final km = round2(parseDecimal(_kmController.text)!);
+    final trip = sanitizeFreeText(_tripController.text);
 
     setState(() {
       _busy = true;
@@ -58,11 +82,14 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
     try {
       final fileManager = PeriodFileManager();
       final file = await fileManager.mileageReportFile(widget.period);
+      final settings = await SettingsRepository().load();
       await saveMileageDrivingDetail(
         file,
         date: _date,
         trip: trip,
         km: km,
+        periodKmRate: widget.period.kmRate,
+        settingsDefaultRate: settings.kmRate,
         onPhase: (phase) {
           if (mounted) setState(() => _savePhase = phase);
         },
@@ -112,13 +139,16 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
                 const Divider(),
                 TextField(
                   controller: _tripController,
-                  decoration: InputDecoration(labelText: t(context, 'drivingDetails.trip')),
+                  decoration: InputDecoration(labelText: t(context, 'drivingDetails.trip'), errorText: _tripError),
+                  maxLength: 300,
+                  onChanged: (_) => setState(() => _tripError = null),
                 ),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _kmController,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(labelText: t(context, 'drivingDetails.km')),
+                  decoration: InputDecoration(labelText: t(context, 'drivingDetails.km'), errorText: _kmError),
+                  onChanged: (_) => setState(() => _kmError = null),
                 ),
                 const SizedBox(height: 24),
                 FilledButton(onPressed: _save, child: Text(t(context, 'common.save'))),

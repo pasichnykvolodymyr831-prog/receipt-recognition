@@ -166,11 +166,13 @@ void main() {
       }
 
       // Add a new receipt (unrelated to the already-damaged row 8 cells,
-      // which get pushed down but never rewritten by this action since the
-      // Kilometers row shift only touches A/B/E, not D/K).
+      // which get pushed down to row 10 by the Kilometers-row shift and
+      // then cleared -- not rewritten in place).
       await saveMileageReceipt(
         file,
         const ReceiptInput(date: null, description: null, subtotal: 12.5, gst: 0.63),
+        periodKmRate: null,
+        settingsDefaultRate: 0.56,
       );
 
       final afterSheet = MileageReportEngine.fromBytes(await file.readAsBytes()).excel.sheets['Truman Homes']!;

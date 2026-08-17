@@ -9,6 +9,9 @@ import '../models/payroll_period.dart';
 import '../services/period_file_manager.dart';
 import '../services/receipt_parser.dart';
 import '../services/safe_xlsx_write.dart';
+import '../services/settings_repository.dart';
+import '../utils/number_input.dart';
+import '../utils/text_input.dart';
 import '../xlsx/mileage_report_engine.dart';
 
 enum _EntryMode { none, ocr, manual }
@@ -34,6 +37,14 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
   final _descriptionController = TextEditingController();
   final _subtotalController = TextEditingController();
   final _gstController = TextEditingController();
+
+  // Section 8: Date, Subtotal and GST are required -- these hold the
+  // per-field message shown next to the offending field when "Save" is
+  // pressed with one of them missing/unparseable, cleared as the user
+  // edits.
+  String? _dateError;
+  String? _subtotalError;
+  String? _gstError;
 
   @override
   void dispose() {
@@ -112,24 +123,57 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
-    if (picked != null) setState(() => _date = picked);
+    if (picked != null) {
+      setState(() {
+        _date = picked;
+        _dateError = null;
+      });
+    }
+  }
+
+  /// Section 8: Date, Subtotal and GST are required; Description is not.
+  /// Populates the per-field error messages and, if the receipt is still in
+  /// the un-edited OCR preview, switches it into edit mode so the user can
+  /// actually fix the offending field(s) -- read-only fields can't be
+  /// corrected otherwise.
+  bool _validate() {
+    final subtotal = _editing ? parseDecimal(_subtotalController.text) : _subtotal;
+    final gst = _editing ? parseDecimal(_gstController.text) : _gst;
+
+    final dateError = _date == null ? t(context, 'addReceipt.dateRequired') : null;
+    final subtotalError = subtotal == null ? t(context, 'addReceipt.subtotalRequired') : null;
+    final gstError = gst == null ? t(context, 'addReceipt.gstRequired') : null;
+    final hasError = dateError != null || subtotalError != null || gstError != null;
+
+    setState(() {
+      _dateError = dateError;
+      _subtotalError = subtotalError;
+      _gstError = gstError;
+      if (hasError) _editing = true;
+    });
+    return !hasError;
   }
 
   bool get _gstLooksOff {
-    final subtotal = _editing ? double.tryParse(_subtotalController.text) : _subtotal;
-    final gst = _editing ? double.tryParse(_gstController.text) : _gst;
+    final subtotal = _editing ? parseDecimal(_subtotalController.text) : _subtotal;
+    final gst = _editing ? parseDecimal(_gstController.text) : _gst;
     if (subtotal == null || gst == null || subtotal == 0) return false;
     final expected = subtotal * 0.05;
     if (expected == 0) return false;
-    final deviation = (gst - expected).abs() / expected;
+    // Both numerator and denominator by modulus (section 8): a plain
+    // signed division would flip sign on a return receipt (negative
+    // Subtotal -> negative expected), silently disabling this check right
+    // when it's needed most.
+    final deviation = (gst - expected).abs() / expected.abs();
     return deviation > 0.15;
   }
 
   Future<void> _save() async {
     if (_busy) return; // guards against a second tap starting a concurrent write
-    final subtotal = _editing ? double.tryParse(_subtotalController.text) : _subtotal;
-    final gst = _editing ? double.tryParse(_gstController.text) : _gst;
-    final description = _descriptionController.text.trim();
+    if (!_validate()) return;
+    final subtotal = _editing ? parseDecimal(_subtotalController.text) : _subtotal;
+    final gst = _editing ? parseDecimal(_gstController.text) : _gst;
+    final description = sanitizeFreeText(_descriptionController.text);
 
     setState(() {
       _busy = true;
@@ -138,14 +182,23 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
     try {
       final fileManager = PeriodFileManager();
       final file = await fileManager.mileageReportFile(widget.period);
+      final settings = await SettingsRepository().load();
       await saveMileageReceipt(
         file,
         ReceiptInput(
           date: _date,
           description: description.isEmpty ? null : description,
-          subtotal: subtotal,
-          gst: gst,
+          // Section 8: round to 2 decimals here, at the point the value
+          // leaves the screen -- a typed "12.3456" must never reach the
+          // file as anything but 12.35.
+          subtotal: subtotal == null ? null : round2(subtotal),
+          gst: gst == null ? null : round2(gst),
         ),
+        // Section 6.2's priority rule: the period's own rate wins if set,
+        // otherwise the Settings default -- and the file's own G1 wins over
+        // both if it's already filled (resolved inside the engine).
+        periodKmRate: widget.period.kmRate,
+        settingsDefaultRate: settings.kmRate,
         onPhase: (phase) {
           if (mounted) setState(() => _savePhase = phase);
         },
@@ -242,7 +295,13 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
       children: [
         ListTile(
           title: Text(t(context, 'addReceipt.date')),
-          subtitle: Text(dateFmt),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(dateFmt),
+              if (_dateError != null) Text(_dateError!, style: const TextStyle(color: Colors.red)),
+            ],
+          ),
           trailing: _editing ? const Icon(Icons.calendar_today) : null,
           onTap: _editing ? _pickDate : null,
         ),
@@ -251,15 +310,15 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
           TextField(
             controller: _subtotalController,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(labelText: t(context, 'addReceipt.subtotal')),
-            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(labelText: t(context, 'addReceipt.subtotal'), errorText: _subtotalError),
+            onChanged: (_) => setState(() => _subtotalError = null),
           ),
           const SizedBox(height: 8),
           TextField(
             controller: _gstController,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(labelText: t(context, 'addReceipt.gst')),
-            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(labelText: t(context, 'addReceipt.gst'), errorText: _gstError),
+            onChanged: (_) => setState(() => _gstError = null),
           ),
         ] else ...[
           ListTile(title: Text(t(context, 'addReceipt.subtotal')), subtitle: Text(_subtotal?.toStringAsFixed(2) ?? '—')),
@@ -278,6 +337,7 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
           controller: _descriptionController,
           decoration: InputDecoration(labelText: t(context, 'addReceipt.description')),
           maxLines: 2,
+          maxLength: 300,
         ),
         const SizedBox(height: 24),
         if (_mode == _EntryMode.ocr && !_editing)

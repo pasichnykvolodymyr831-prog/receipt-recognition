@@ -1,7 +1,10 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:excel/excel.dart';
 import 'package:path_provider/path_provider.dart';
+
+import '../xlsx/xlsx_rels_compat.dart';
 
 /// Backs up period files before every write and restores them if a file is
 /// found corrupted (e.g. the app was killed mid-write) at next launch
@@ -41,9 +44,15 @@ class BackupManager {
     await restoreIfCorruptedUsing(targetFile, backup);
   }
 
+  /// Normalizes `.rels` targets before attempting to decode (see
+  /// [MileageReportEngine.fromBytes] for why) -- otherwise a template whose
+  /// `.rels` still carries the openpyxl absolute-path quirk would be
+  /// reported as "corrupted" even though it's perfectly valid once
+  /// normalized, which would make [restoreIfCorruptedUsing] wrongly
+  /// overwrite a fine file with a stale backup.
   static bool isValidXlsx(List<int> bytes) {
     try {
-      Excel.decodeBytes(bytes);
+      Excel.decodeBytes(normalizeXlsxRelationshipTargets(Uint8List.fromList(bytes)));
       return true;
     } catch (_) {
       return false;

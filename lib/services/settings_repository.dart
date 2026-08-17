@@ -28,12 +28,18 @@ class AppSettings {
   final String phone;
   final RetentionPolicy retention;
 
+  /// The $/km default rate (section 11) -- unlike a period's own [kmRate]
+  /// (`PayrollPeriod.kmRate`, which may be null), this one is mandatory and
+  /// must be > 0: it's the fallback every period without its own rate uses.
+  final double kmRate;
+
   const AppSettings({
     required this.languageCode,
     required this.firstName,
     required this.lastName,
     required this.phone,
     required this.retention,
+    required this.kmRate,
   });
 
   static const defaults = AppSettings(
@@ -42,6 +48,7 @@ class AppSettings {
     lastName: 'Homes',
     phone: '',
     retention: RetentionPolicy.threeMonths,
+    kmRate: 0.56,
   );
 
   String get fullName => '$firstName $lastName'.trim();
@@ -52,6 +59,7 @@ class AppSettings {
     String? lastName,
     String? phone,
     RetentionPolicy? retention,
+    double? kmRate,
   }) {
     return AppSettings(
       languageCode: languageCode ?? this.languageCode,
@@ -59,6 +67,7 @@ class AppSettings {
       lastName: lastName ?? this.lastName,
       phone: phone ?? this.phone,
       retention: retention ?? this.retention,
+      kmRate: kmRate ?? this.kmRate,
     );
   }
 }
@@ -70,6 +79,7 @@ class SettingsRepository {
   static const _keyLastName = 'settings.lastName';
   static const _keyPhone = 'settings.phone';
   static const _keyRetention = 'settings.retention';
+  static const _keyKmRate = 'settings.kmRate';
 
   Future<AppSettings> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -83,6 +93,7 @@ class SettingsRepository {
         (e) => e.name == retentionName,
         orElse: () => AppSettings.defaults.retention,
       ),
+      kmRate: prefs.getDouble(_keyKmRate) ?? AppSettings.defaults.kmRate,
     );
   }
 
@@ -93,5 +104,6 @@ class SettingsRepository {
     await prefs.setString(_keyLastName, settings.lastName);
     await prefs.setString(_keyPhone, settings.phone);
     await prefs.setString(_keyRetention, settings.retention.name);
+    await prefs.setDouble(_keyKmRate, settings.kmRate);
   }
 }

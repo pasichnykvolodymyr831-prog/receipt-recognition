@@ -1,9 +1,12 @@
+import 'dart:typed_data';
+
 import 'package:excel/excel.dart';
 import 'package:flutter/material.dart';
 
 import '../models/payroll_period.dart';
 import '../utils/time_format.dart';
 import 'cell_value_utils.dart';
+import 'xlsx_rels_compat.dart';
 
 class TimesheetStructureException implements Exception {
   final String message;
@@ -54,8 +57,11 @@ class TimesheetEngine {
     _assertStructure();
   }
 
+  /// Normalizes package-root-relative `.rels` targets before decoding --
+  /// see [MileageReportEngine.fromBytes] for why every `.fromBytes` factory
+  /// does this rather than relying on callers to normalize separately.
   factory TimesheetEngine.fromBytes(List<int> bytes) {
-    return TimesheetEngine(Excel.decodeBytes(bytes));
+    return TimesheetEngine(Excel.decodeBytes(normalizeXlsxRelationshipTargets(Uint8List.fromList(bytes))));
   }
 
   List<int> save() {
@@ -138,6 +144,20 @@ class TimesheetEngine {
     setCellValue(_sheet, 'G$row', DoubleCellValue(hours));
     setCellValue(_sheet, 'H$row', DoubleCellValue(hours));
 
+    recalcTotalHours();
+  }
+
+  /// Clears a day's Start/Lunch/Coffee/Finish/Hours/Total (section 10) --
+  /// marks the day as not worked. A legitimate, deliberate action (weekend,
+  /// STAT, sick day, or a day the user simply didn't work), not an error
+  /// case; distinct from [writeDay]'s validation of a filled-in day.
+  void clearDay(int row) {
+    if (row < firstDayRow || row > lastDayRow) {
+      throw RangeError.value(row, 'row', 'Must be between $firstDayRow and $lastDayRow');
+    }
+    for (final col in ['C', 'D', 'E', 'F', 'G', 'H']) {
+      setCellValue(_sheet, '$col$row', null);
+    }
     recalcTotalHours();
   }
 

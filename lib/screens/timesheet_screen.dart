@@ -39,10 +39,10 @@ class _TimesheetScreenState extends State<TimesheetScreen> {
   Future<void> _openDay(int row, DateTime date) async {
     if (_busy) return; // guards against a second tap starting a concurrent write
     final existing = _summary!.daysByRow[row - TimesheetEngine.firstDayRow];
-    final result = await Navigator.of(context).push<TimesheetDayInput>(
+    final result = await Navigator.of(context).push<_DayEditResult>(
       MaterialPageRoute(builder: (context) => _EditDayScreen(date: date, initial: existing)),
     );
-    if (result == null) return;
+    if (result == null) return; // cancelled -- distinct from an explicit "clear the day"
 
     setState(() {
       _busy = true;
@@ -51,14 +51,16 @@ class _TimesheetScreenState extends State<TimesheetScreen> {
     try {
       final fileManager = PeriodFileManager();
       final file = await fileManager.timesheetFile(widget.period);
-      await saveTimesheetDay(
-        file,
-        row: row,
-        input: result,
-        onPhase: (phase) {
-          if (mounted) setState(() => _savePhase = phase);
-        },
-      );
+      void onPhase(SaveXlsxPhase phase) {
+        if (mounted) setState(() => _savePhase = phase);
+      }
+
+      switch (result) {
+        case _DaySaved(:final input):
+          await saveTimesheetDay(file, row: row, input: input, onPhase: onPhase);
+        case _DayCleared():
+          await clearTimesheetDay(file, row: row, onPhase: onPhase);
+      }
       _summary = await readTimesheetSummary(file);
     } catch (e) {
       if (mounted) {
@@ -146,6 +148,23 @@ class _TimesheetScreenState extends State<TimesheetScreen> {
   }
 }
 
+/// What closing the per-day editor means: a filled-in day to save, an
+/// explicit request to blank the day out (section 10 -- a legitimate action,
+/// distinct from cancelling), or `null` (the route's own null, handled by
+/// the caller) for "the user backed out without deciding either way".
+sealed class _DayEditResult {
+  const _DayEditResult();
+}
+
+class _DaySaved extends _DayEditResult {
+  final TimesheetDayInput input;
+  const _DaySaved(this.input);
+}
+
+class _DayCleared extends _DayEditResult {
+  const _DayCleared();
+}
+
 class _EditDayScreen extends StatefulWidget {
   final DateTime date;
   final TimesheetDayInput? initial;
@@ -165,6 +184,11 @@ class _EditDayScreenState extends State<_EditDayScreen> {
   TimeOfDay? _coffeeEnd;
   late TimeOfDay _finish;
 
+  // Section 10: a day's hours can't be negative or zero -- Finish before
+  // Start, or breaks eating the whole span, both silently corrupt H39 if
+  // let through.
+  String? _hoursError;
+
   @override
   void initState() {
     super.initState();
@@ -182,30 +206,46 @@ class _EditDayScreenState extends State<_EditDayScreen> {
 
   Future<void> _pick(TimeOfDay initial, void Function(TimeOfDay) onPicked) async {
     final picked = await showTimePicker(context: context, initialTime: initial);
-    if (picked != null) setState(() => onPicked(picked));
+    if (picked != null) {
+      setState(() {
+        onPicked(picked);
+        _hoursError = null;
+      });
+    }
   }
 
-  double get _hours {
-    final input = TimesheetDayInput(
-      start: _start,
-      lunchStart: _lunchStart,
-      lunchEnd: _lunchEnd,
-      coffeeStart: _hasCoffee ? _coffeeStart : null,
-      coffeeEnd: _hasCoffee ? _coffeeEnd : null,
-      finish: _finish,
-    );
-    return input.hours;
-  }
+  TimesheetDayInput get _input => TimesheetDayInput(
+        start: _start,
+        lunchStart: _lunchStart,
+        lunchEnd: _lunchEnd,
+        coffeeStart: _hasCoffee ? _coffeeStart : null,
+        coffeeEnd: _hasCoffee ? _coffeeEnd : null,
+        finish: _finish,
+      );
+
+  double get _hours => _input.hours;
+
+  /// Section 10: Finish at or before Start reads as a same-day negative/zero
+  /// span here (the app doesn't support a shift crossing midnight in one
+  /// row) -- used only to pick a more useful error message, not to compute
+  /// hours differently.
+  bool get _looksLikeMidnightCrossing => _finish.hour * 60 + _finish.minute <= _start.hour * 60 + _start.minute;
 
   void _save() {
-    Navigator.of(context).pop(TimesheetDayInput(
-      start: _start,
-      lunchStart: _lunchStart,
-      lunchEnd: _lunchEnd,
-      coffeeStart: _hasCoffee ? _coffeeStart : null,
-      coffeeEnd: _hasCoffee ? _coffeeEnd : null,
-      finish: _finish,
-    ));
+    final hours = _hours;
+    if (hours <= 0) {
+      setState(() {
+        _hoursError = _looksLikeMidnightCrossing
+            ? t(context, 'timesheet.errorMidnightCrossing')
+            : t(context, 'timesheet.errorNonPositiveHours');
+      });
+      return;
+    }
+    Navigator.of(context).pop(_DaySaved(_input));
+  }
+
+  void _clearDay() {
+    Navigator.of(context).pop(const _DayCleared());
   }
 
   @override
@@ -259,8 +299,15 @@ class _EditDayScreenState extends State<_EditDayScreen> {
             title: Text(t(context, 'timesheet.hours'), style: const TextStyle(fontWeight: FontWeight.bold)),
             trailing: Text(_hours.toStringAsFixed(2)),
           ),
+          if (_hoursError != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(_hoursError!, style: const TextStyle(color: Colors.red)),
+            ),
           const SizedBox(height: 16),
           FilledButton(onPressed: _save, child: Text(t(context, 'common.save'))),
+          const SizedBox(height: 8),
+          OutlinedButton(onPressed: _clearDay, child: Text(t(context, 'timesheet.clearDay'))),
         ],
       ),
     );
