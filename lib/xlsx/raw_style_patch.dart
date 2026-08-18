@@ -4,12 +4,15 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 
-/// Repairs five `excel`-package (v4.0.6) defects that its own object model
+import '../utils/number_input.dart';
+import 'formula_eval.dart';
+
+/// Repairs six `excel`-package (v4.0.6) defects that its own object model
 /// can never detect or fix, by working directly on the encoded xlsx bytes'
 /// raw XML -- the same "bypass the package" approach [xlsx_raw_inspect.dart]
 /// already uses for sheet-hidden state, applied here to cell style (font,
-/// border, fill, alignment), column widths/hidden state, row heights, and
-/// formula cache values:
+/// border, fill, alignment), column widths/hidden state, row heights,
+/// formula cache values, and cells dropped from merged ranges:
 ///
 /// 1. Alignment: `parse.dart`'s cellXf parser reads the `horizontal`/
 ///    `vertical` attributes off the `<xf>` node instead of its `<alignment>`
@@ -46,22 +49,54 @@ import 'package:xml/xml.dart';
 /// 5. Formula cache values: the package never evaluates formulas, and
 ///    round-trips "no computed value" as a *present but empty* `<v></v>`
 ///    (confirmed present even in the pristine, never-touched template)
-///    rather than a real number or an absent `<v>` -- observed to make a
-///    real user's Excel never recalculate the formula on open (manual F9
-///    required) despite `<calcPr fullCalcOnLoad="1">` already being set.
-///    `_stripFormulaValueCache` removes the cached value outright so an
-///    absent `<v>` unambiguously tells Excel "no cache, please compute";
-///    `_ensureFullCalcOnLoad` guarantees the workbook-level trigger for
-///    that computation is always set, not just observed to survive today.
+///    rather than a real number -- observed to make a real user's Excel
+///    never recalculate the formula on open (manual F9 required) despite
+///    `<calcPr fullCalcOnLoad="1">` already being set. Stripping the cached
+///    value outright fixes that (an absent `<v>` unambiguously tells Excel
+///    "no cache, please compute"), but introduced a second, narrower gap:
+///    Excel's Protected View (the sandbox any file carrying a Mark-of-the-
+///    Web opens into, e.g. anything the phone "Отправить"s over email/
+///    cloud) never runs the calculation engine at all while active, so a
+///    formula cell with no cached value renders as completely blank there
+///    until the user clicks "Enable Editing" -- confirmed by the user on a
+///    real device file. `_recomputeFormulaValues` closes that gap by
+///    actually evaluating each formula in Dart ([formula_eval.dart] --
+///    every real formula in these templates reduces to `SUM(range)`,
+///    `SUM(a*b)`, or a chain of `+cell+cell...`) and writing the real
+///    result as the cached `<v>`, so a non-recalculating viewer shows a
+///    correct value immediately. `fullCalcOnLoad` still forces a full,
+///    independent recalculation the moment real Excel *does* run its
+///    engine, so a bug in this evaluator can only ever affect a transient
+///    read-only preview, never the number the user actually edits against.
+///    Evaluation failure (unsupported syntax, a non-numeric operand, a
+///    circular reference) is never fatal -- it just leaves that one cell
+///    exactly as before, with no cached value at all.
+///    `_ensureFullCalcOnLoad` guarantees the workbook-level recalculation
+///    trigger is always set, not just observed to survive today.
+/// 6. Merged-cell cells vanish entirely: a cell that's part of a merged
+///    range but was only ever given a style (never a *value* -- e.g. the
+///    "J" half of an `I:J` merge, the app only ever writes into the anchor
+///    `I`) is silently dropped from `<sheetData>` on `.encode()`, the
+///    cell-level twin of defect #4's row-dropping. No Load error results
+///    (Excel tolerates a `<mergeCell>` referencing an absent cell), but
+///    Excel then has nothing to render a border/fill from for that cell --
+///    confirmed on a real device file (J and M columns completely
+///    blank/unbordered in real Excel on every data row, despite the merge
+///    and the anchor cell's own style both being intact).
+///    `_insertMissingMergedCells` re-inserts a bare placeholder for any
+///    such missing cell, then leaves it for `_patchCellStyles` (which runs
+///    immediately after, in the same per-sheet loop) to heal its style
+///    exactly like any other cell.
 ///
 /// Column-width/hidden, row-height, and formula-cache repairs are applied
 /// for every sheet named in [allSheets] (these are workbook-encode-time
 /// defects, not per-cell corruption, so they recur on every single save
 /// regardless of which sheets style_heal.dart actually touches). Cell-style
-/// repair is scoped to [alignmentSheets] -- normally the same sheets
-/// style_heal.dart heals on this write, since properties 1-2 above share
-/// the same root cause (a cell's `<xf>` no longer being the template's
-/// original entry).
+/// repair (including re-inserting missing merged cells, which only matters
+/// immediately before it) is scoped to [alignmentSheets] -- normally the
+/// same sheets style_heal.dart heals on this write, since properties 1-2
+/// above share the same root cause (a cell's `<xf>` no longer being the
+/// template's original entry).
 Uint8List patchRawXlsxStyles(
   Uint8List encodedBytes,
   Uint8List templateBytes, {
@@ -104,8 +139,9 @@ Uint8List patchRawXlsxStyles(
 
     _patchColumns(sheetDoc, templateSheetDoc);
     _patchRowHeights(sheetDoc, templateSheetDoc);
-    _stripFormulaValueCache(sheetDoc);
+    _recomputeFormulaValues(sheetDoc);
     if (alignmentSheets.contains(name)) {
+      _insertMissingMergedCells(sheetDoc);
       _patchCellStyles(
         outputSheetDoc: sheetDoc,
         outputXfs: outputXfs,
@@ -477,24 +513,96 @@ void _patchRowHeights(XmlDocument outputSheetDoc, XmlDocument templateSheetDoc) 
   }
 }
 
-/// Removes the cached `<v>` value from every formula cell (`<c>` with an
-/// `<f>` child) unconditionally. The `excel` package (v4.0.6) never
-/// evaluates formulas -- it round-trips "no computed value" as a *present
-/// but empty* `<v></v>` rather than a real number or an absent `<v>`,
-/// confirmed present even in the pristine, never-touched template. A
-/// present-but-empty `<v>` risks Excel reading it as "the cached value IS
-/// the empty string" rather than the unambiguous "no cache, please
-/// compute" an absent `<v>` signals -- exactly what a real user's Excel
-/// was observed doing: formulas never recalculated, requiring a manual F9,
-/// despite `<calcPr fullCalcOnLoad="1">` (see [_ensureFullCalcOnLoad])
-/// already being set. Removing `<v>` outright (not just when empty) is
-/// both simpler and more correct: the app never computes real values
-/// itself, so any cached value it round-trips through is unreliable by
-/// construction, whether empty or not.
-void _stripFormulaValueCache(XmlDocument sheetDoc) {
+/// Recomputes and re-caches every formula cell's `<v>` value. The `excel`
+/// package (v4.0.6) never evaluates formulas -- it round-trips "no computed
+/// value" as a *present but empty* `<v></v>` rather than a real number,
+/// confirmed present even in the pristine, never-touched template. An
+/// unconditionally-empty cache made a real user's Excel never recalculate
+/// on open (manual F9 required) despite `<calcPr fullCalcOnLoad="1">` (see
+/// [_ensureFullCalcOnLoad]) already being set -- fixed by always stripping
+/// any existing `<v>` first, below. But an absent cache also means Excel's
+/// Protected View (which never runs the calculation engine while active)
+/// renders formula cells as blank until "Enable Editing" -- confirmed on a
+/// real device file. Actually evaluating the formula here and writing the
+/// real result back closes that gap: any non-recalculating viewer now sees
+/// a correct value immediately, while `fullCalcOnLoad` still guarantees a
+/// full, independent recalculation the moment real Excel *does* run its
+/// engine -- so a bug in [evaluateFormula] can only ever affect a
+/// transient read-only preview, never the number the user edits against.
+///
+/// Builds a single `ref -> <c>` map for the sheet, then resolves each
+/// formula through a memoized, cycle-guarded closure: an absent cell
+/// resolves as `0.0` (blank = 0, standard SUM/addition semantics -- matches
+/// how these ranges already tolerate not-yet-filled rows), a cell with a
+/// non-numeric `t` (shared string/bool/error) resolves as `null` (never
+/// guess at a text cell's numeric value), a cell with its own `<f>`
+/// recurses through the same closure (so e.g. every `L{r} = +K{r}+I{r}`
+/// correctly depends on `I{r}`'s own freshly-evaluated result), and a
+/// plain `<v>` is parsed directly. [evaluateFormula] never throws --
+/// failure at any point (unsupported syntax, an unresolvable operand, a
+/// circular reference) simply yields `null`, which this function treats
+/// as "leave this cell exactly as before, no cached value" -- the exact
+/// same safe fallback the pure-strip behavior already had, never worse.
+/// Results are rounded with [round2] (`lib/utils/number_input.dart`), the
+/// same helper already used everywhere else money/km is written, so a
+/// cached formula result never carries a longer float tail than the app's
+/// own values do.
+void _recomputeFormulaValues(XmlDocument sheetDoc) {
+  final cellsByRef = <String, XmlElement>{};
   for (final c in sheetDoc.findAllElements('c')) {
-    if (c.findElements('f').isEmpty) continue;
-    c.children.removeWhere((n) => n is XmlElement && n.name.local == 'v');
+    final ref = c.getAttribute('r');
+    if (ref != null) cellsByRef[ref] = c;
+  }
+
+  final memo = <String, double?>{};
+  final visiting = <String>{};
+
+  double? resolve(String ref) {
+    if (memo.containsKey(ref)) return memo[ref];
+    final cell = cellsByRef[ref];
+    if (cell == null) return 0.0;
+    if (visiting.contains(ref)) return null;
+    final type = cell.getAttribute('t');
+    if (type != null && type != 'n') return null;
+
+    final fElements = cell.findElements('f');
+    double? value;
+    if (fElements.isNotEmpty) {
+      visiting.add(ref);
+      try {
+        value = evaluateFormula(fElements.first.innerText, resolve);
+      } finally {
+        visiting.remove(ref);
+      }
+    } else {
+      final vElements = cell.findElements('v');
+      // A cell can exist purely because style_heal.dart gave it a style
+      // (`<c r="D8" s="28"/>`, no <v> at all) without the app ever writing
+      // a value into it -- e.g. every receipt-column cell on a row with no
+      // receipt yet. That's a blank cell, not a malformed one: it must
+      // resolve as 0.0 exactly like a cell absent from the map entirely,
+      // not null (which would incorrectly poison every SUM/addition that
+      // includes an as-yet-unfilled row -- the common case on a fresh
+      // period, not an edge case).
+      value = vElements.isEmpty ? 0.0 : double.tryParse(vElements.first.innerText);
+    }
+    memo[ref] = value;
+    return value;
+  }
+
+  for (final entry in cellsByRef.entries) {
+    final cell = entry.value;
+    if (cell.findElements('f').isEmpty) continue;
+    cell.children.removeWhere((n) => n is XmlElement && n.name.local == 'v');
+
+    double? result;
+    try {
+      result = resolve(entry.key);
+    } catch (_) {
+      result = null;
+    }
+    if (result == null || !result.isFinite) continue;
+    cell.children.add(XmlElement(XmlName('v'), [], [XmlText('${round2(result)}')]));
   }
 }
 
@@ -514,4 +622,131 @@ void _ensureFullCalcOnLoad(XmlDocument workbookDoc) {
   workbookDoc.rootElement.children.add(
     XmlElement(XmlName('calcPr'), [XmlAttribute(XmlName('fullCalcOnLoad'), '1')], []),
   );
+}
+
+int _columnLettersToNum(String letters) {
+  var n = 0;
+  for (final ch in letters.codeUnits) {
+    n = n * 26 + (ch - 64);
+  }
+  return n;
+}
+
+String _numToColumnLetters(int col) {
+  var n = col;
+  var s = '';
+  while (n > 0) {
+    final rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = (n - 1) ~/ 26;
+  }
+  return s;
+}
+
+int? _columnOf(String cellRef) {
+  final match = RegExp(r'^([A-Z]+)\d+$').firstMatch(cellRef);
+  return match == null ? null : _columnLettersToNum(match.group(1)!);
+}
+
+class _CellRange {
+  final int colStart, rowStart, colEnd, rowEnd;
+  const _CellRange(this.colStart, this.rowStart, this.colEnd, this.rowEnd);
+}
+
+_CellRange? _parseCellRange(String ref) {
+  final match = RegExp(r'^([A-Z]+)(\d+):([A-Z]+)(\d+)$').firstMatch(ref);
+  if (match == null) return null;
+  return _CellRange(
+    _columnLettersToNum(match.group(1)!),
+    int.parse(match.group(2)!),
+    _columnLettersToNum(match.group(3)!),
+    int.parse(match.group(4)!),
+  );
+}
+
+/// Excel-package defect #6: a cell that's part of a merged range but was
+/// never written a *value* -- only ever gets a style, via style_heal.dart's
+/// whole-sheet `cell.cellStyle = template.cellStyle` in-memory pass (e.g.
+/// the "J" half of an `I:J` merge, "M" half of an `L:M` merge -- the app
+/// only ever writes into the anchor, I/L, never J/M) -- is silently
+/// dropped from `<sheetData>` entirely on `.encode()`, the cell-level twin
+/// of defect #4's row-dropping. This doesn't trigger a Load error (Excel
+/// tolerates a `<mergeCell>` whose range includes a cell absent from
+/// sheetData), but it does mean Excel has *nothing* to render a style
+/// from there -- no border, no fill, nothing -- confirmed on a real device
+/// file (J and M columns completely blank/unbordered in real Excel across
+/// every data row, despite the merge declaration and the anchor cell's own
+/// style both being intact) and reproduced via the same missing-cell
+/// pattern on Timesheet's `A1:H1` merge during an earlier investigation.
+///
+/// Re-inserts a bare `<c r="ref"/>` placeholder (no `s=`, implicitly style
+/// index 0 -- the same convention `_patchCellStyles` already uses for a
+/// cell with no `s` attribute) for any cell inside a declared
+/// `<mergeCell>` range that's missing from `<sheetData>`, in the correct
+/// sorted column position within its row (creating the row too, in correct
+/// sorted row position, on the rare occasion the whole row is *also*
+/// missing -- reusing the same "find the element after this position"
+/// pattern [_patchRowHeights] already uses). Deliberately does not resolve
+/// or assign the correct style itself -- that's left entirely to
+/// [_patchCellStyles], which runs immediately after this in the per-sheet
+/// loop and already compares every `<c>` against the template via the
+/// exact same content-comparison logic used for every other cell.
+void _insertMissingMergedCells(XmlDocument outputSheetDoc) {
+  final mergeCellsEl = outputSheetDoc.findAllElements('mergeCells');
+  if (mergeCellsEl.isEmpty) return;
+
+  final sheetData = outputSheetDoc.findAllElements('sheetData').first;
+  final existingRows = <int, XmlElement>{};
+  for (final row in sheetData.findElements('row')) {
+    final r = int.tryParse(row.getAttribute('r') ?? '');
+    if (r != null) existingRows[r] = row;
+  }
+
+  for (final mergeCell in mergeCellsEl.first.findElements('mergeCell')) {
+    final ref = mergeCell.getAttribute('ref');
+    if (ref == null) continue;
+    final range = _parseCellRange(ref);
+    if (range == null) continue;
+
+    for (var r = range.rowStart; r <= range.rowEnd; r++) {
+      final row = existingRows.putIfAbsent(r, () {
+        final newRow = XmlElement(XmlName('row'), [XmlAttribute(XmlName('r'), '$r')], []);
+        XmlElement? insertBefore;
+        for (final existing in sheetData.findElements('row')) {
+          final rr = int.tryParse(existing.getAttribute('r') ?? '');
+          if (rr != null && rr > r) {
+            insertBefore = existing;
+            break;
+          }
+        }
+        if (insertBefore != null) {
+          sheetData.children.insert(sheetData.children.indexOf(insertBefore), newRow);
+        } else {
+          sheetData.children.add(newRow);
+        }
+        return newRow;
+      });
+
+      for (var c = range.colStart; c <= range.colEnd; c++) {
+        final cellRef = '${_numToColumnLetters(c)}$r';
+        final alreadyExists = row.findElements('c').any((cell) => cell.getAttribute('r') == cellRef);
+        if (alreadyExists) continue;
+
+        final newCell = XmlElement(XmlName('c'), [XmlAttribute(XmlName('r'), cellRef)], []);
+        XmlElement? insertBefore;
+        for (final existing in row.findElements('c')) {
+          final cc = _columnOf(existing.getAttribute('r') ?? '');
+          if (cc != null && cc > c) {
+            insertBefore = existing;
+            break;
+          }
+        }
+        if (insertBefore != null) {
+          row.children.insert(row.children.indexOf(insertBefore), newCell);
+        } else {
+          row.children.add(newCell);
+        }
+      }
+    }
+  }
 }
