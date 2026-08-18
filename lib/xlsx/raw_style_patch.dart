@@ -4,11 +4,12 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 
-/// Repairs four `excel`-package (v4.0.6) defects that its own object model
+/// Repairs five `excel`-package (v4.0.6) defects that its own object model
 /// can never detect or fix, by working directly on the encoded xlsx bytes'
 /// raw XML -- the same "bypass the package" approach [xlsx_raw_inspect.dart]
 /// already uses for sheet-hidden state, applied here to cell style (font,
-/// border, fill, alignment), column widths/hidden state, and row heights:
+/// border, fill, alignment), column widths/hidden state, row heights, and
+/// formula cache values:
 ///
 /// 1. Alignment: `parse.dart`'s cellXf parser reads the `horizontal`/
 ///    `vertical` attributes off the `<xf>` node instead of its `<alignment>`
@@ -42,15 +43,25 @@ import 'package:xml/xml.dart';
 ///    element entirely for any row with zero cells (`_sheetData[row] ==
 ///    null`), silently losing that row's explicit height if it was a blank
 ///    spacer row with no cell content.
+/// 5. Formula cache values: the package never evaluates formulas, and
+///    round-trips "no computed value" as a *present but empty* `<v></v>`
+///    (confirmed present even in the pristine, never-touched template)
+///    rather than a real number or an absent `<v>` -- observed to make a
+///    real user's Excel never recalculate the formula on open (manual F9
+///    required) despite `<calcPr fullCalcOnLoad="1">` already being set.
+///    `_stripFormulaValueCache` removes the cached value outright so an
+///    absent `<v>` unambiguously tells Excel "no cache, please compute";
+///    `_ensureFullCalcOnLoad` guarantees the workbook-level trigger for
+///    that computation is always set, not just observed to survive today.
 ///
-/// Column-width/hidden and row-height repairs are applied for every sheet
-/// named in [allSheets] (these are workbook-encode-time defects, not
-/// per-cell corruption, so they recur on every single save regardless of
-/// which sheets style_heal.dart actually touches). Cell-style repair is
-/// scoped to [alignmentSheets] -- normally the same sheets style_heal.dart
-/// heals on this write, since all four of the properties above share the
-/// same root cause (a cell's `<xf>` no longer being the template's original
-/// entry).
+/// Column-width/hidden, row-height, and formula-cache repairs are applied
+/// for every sheet named in [allSheets] (these are workbook-encode-time
+/// defects, not per-cell corruption, so they recur on every single save
+/// regardless of which sheets style_heal.dart actually touches). Cell-style
+/// repair is scoped to [alignmentSheets] -- normally the same sheets
+/// style_heal.dart heals on this write, since properties 1-2 above share
+/// the same root cause (a cell's `<xf>` no longer being the template's
+/// original entry).
 Uint8List patchRawXlsxStyles(
   Uint8List encodedBytes,
   Uint8List templateBytes, {
@@ -62,6 +73,9 @@ Uint8List patchRawXlsxStyles(
 
   final sheetFiles = _sheetFileMap(archive);
   final templateSheetFiles = _sheetFileMap(templateArchive);
+
+  final workbookDoc = _readXml(archive, 'xl/workbook.xml');
+  _ensureFullCalcOnLoad(workbookDoc);
 
   final stylesDoc = _readXml(archive, 'xl/styles.xml');
   final templateStylesDoc = _readXml(templateArchive, 'xl/styles.xml');
@@ -90,6 +104,7 @@ Uint8List patchRawXlsxStyles(
 
     _patchColumns(sheetDoc, templateSheetDoc);
     _patchRowHeights(sheetDoc, templateSheetDoc);
+    _stripFormulaValueCache(sheetDoc);
     if (alignmentSheets.contains(name)) {
       _patchCellStyles(
         outputSheetDoc: sheetDoc,
@@ -121,6 +136,9 @@ Uint8List patchRawXlsxStyles(
   for (final file in archive.files) {
     if (file.name == 'xl/styles.xml') {
       final content = utf8.encode(stylesDoc.toXmlString());
+      newArchive.addFile(ArchiveFile(file.name, content.length, content));
+    } else if (file.name == 'xl/workbook.xml') {
+      final content = utf8.encode(workbookDoc.toXmlString());
       newArchive.addFile(ArchiveFile(file.name, content.length, content));
     } else if (patchedSheetDocs.containsKey(file.name)) {
       final content = utf8.encode(patchedSheetDocs[file.name]!.toXmlString());
@@ -332,7 +350,15 @@ void _patchCellStyles({
       final clone = currentXf.copy();
       if (needsAlign) {
         clone.children.removeWhere((n) => n is XmlElement && n.name.local == 'alignment');
-        clone.children.add(XmlElement(XmlName('alignment'), [
+        // CT_Xf's child sequence is strictly ordered (alignment, then
+        // protection, then extLst) -- inserting at the end put `<alignment>`
+        // after an existing `<protection>` child on any cell whose current
+        // xf already had one (common on Timesheet's locked-by-default
+        // cells, rare on Mileage's), producing a schema-invalid <xf> that
+        // real Excel rejects and repairs on open, even though every lenient
+        // parser (including the `excel` package's own reader) tolerated it
+        // silently. Confirmed against the real ECMA-376 SpreadsheetML XSD.
+        clone.children.insert(0, XmlElement(XmlName('alignment'), [
           if (desiredAlign.horizontal != null) XmlAttribute(XmlName('horizontal'), desiredAlign.horizontal!),
           if (desiredAlign.vertical != null) XmlAttribute(XmlName('vertical'), desiredAlign.vertical!),
           if (desiredAlign.wrap) XmlAttribute(XmlName('wrapText'), '1'),
@@ -449,4 +475,43 @@ void _patchRowHeights(XmlDocument outputSheetDoc, XmlDocument templateSheetDoc) 
       sheetData.children.add(newRow);
     }
   }
+}
+
+/// Removes the cached `<v>` value from every formula cell (`<c>` with an
+/// `<f>` child) unconditionally. The `excel` package (v4.0.6) never
+/// evaluates formulas -- it round-trips "no computed value" as a *present
+/// but empty* `<v></v>` rather than a real number or an absent `<v>`,
+/// confirmed present even in the pristine, never-touched template. A
+/// present-but-empty `<v>` risks Excel reading it as "the cached value IS
+/// the empty string" rather than the unambiguous "no cache, please
+/// compute" an absent `<v>` signals -- exactly what a real user's Excel
+/// was observed doing: formulas never recalculated, requiring a manual F9,
+/// despite `<calcPr fullCalcOnLoad="1">` (see [_ensureFullCalcOnLoad])
+/// already being set. Removing `<v>` outright (not just when empty) is
+/// both simpler and more correct: the app never computes real values
+/// itself, so any cached value it round-trips through is unreliable by
+/// construction, whether empty or not.
+void _stripFormulaValueCache(XmlDocument sheetDoc) {
+  for (final c in sheetDoc.findAllElements('c')) {
+    if (c.findElements('f').isEmpty) continue;
+    c.children.removeWhere((n) => n is XmlElement && n.name.local == 'v');
+  }
+}
+
+/// Ensures `xl/workbook.xml`'s `<calcPr>` has `fullCalcOnLoad="1"` --
+/// already present and already survives every write today (verified on a
+/// real device file), so this isn't fixing an observed regression; it
+/// guarantees the property doesn't silently depend on happening to survive
+/// a future `excel`-package behavior change, at near-zero cost. Creates
+/// `<calcPr>` (inserted as `<workbook>`'s last child, its required
+/// position per the CT_Workbook schema) if the document has none at all.
+void _ensureFullCalcOnLoad(XmlDocument workbookDoc) {
+  final calcPrs = workbookDoc.findAllElements('calcPr');
+  if (calcPrs.isNotEmpty) {
+    calcPrs.first.setAttribute('fullCalcOnLoad', '1');
+    return;
+  }
+  workbookDoc.rootElement.children.add(
+    XmlElement(XmlName('calcPr'), [XmlAttribute(XmlName('fullCalcOnLoad'), '1')], []),
+  );
 }

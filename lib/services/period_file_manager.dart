@@ -16,10 +16,26 @@ const _months = [
 ];
 String _month(int m) => _months[m - 1];
 
+/// Thrown when more than one file on disk matches a period's file-name
+/// pattern (section 5) -- e.g. an old unprefixed file left behind alongside
+/// a newly-prefixed one after a Settings name change. Never silently pick
+/// one: the unpicked file's data would become invisible to the user, the
+/// same principle as the duplicate-Kilometers-row check (section 13 п.1а).
+class PeriodFileAmbiguousException implements Exception {
+  final String kind; // 'MileageReport' or 'Timesheet'
+  final List<String> candidateNames;
+  const PeriodFileAmbiguousException(this.kind, this.candidateNames);
+  @override
+  String toString() =>
+      'PeriodFileAmbiguousException: multiple $kind files found for this period: ${candidateNames.join(", ")}';
+}
+
 /// Creates, locates, and cleans up the per-period xlsx files (section 5)
 /// in a flat `reports/` folder under the app's documents directory. File
 /// names already encode the period range, so no per-period subfolder is
-/// needed: `MileageReport_<start>_<end>.xlsx`, `Timesheet_<start>_<end>.xlsx`.
+/// needed: `<prefix_>MileageReport_<start>_<end>.xlsx`,
+/// `<prefix_>Timesheet_<start>_<end>.xlsx`, where `<prefix_>` is the
+/// sanitized Settings first name at the time of creation, or nothing.
 class PeriodFileManager {
   Future<Directory> _reportsDir() async {
     final dir = await getApplicationDocumentsDirectory();
@@ -32,12 +48,14 @@ class PeriodFileManager {
 
   Future<File> mileageReportFile(PayrollPeriod period) async {
     final dir = await _reportsDir();
-    return File('${dir.path}/MileageReport_${period.fileId}.xlsx');
+    final existing = await findPeriodFile(dir, 'MileageReport', period.fileId);
+    return existing ?? File('${dir.path}/MileageReport_${period.fileId}.xlsx');
   }
 
   Future<File> timesheetFile(PayrollPeriod period) async {
     final dir = await _reportsDir();
-    return File('${dir.path}/Timesheet_${period.fileId}.xlsx');
+    final existing = await findPeriodFile(dir, 'Timesheet', period.fileId);
+    return existing ?? File('${dir.path}/Timesheet_${period.fileId}.xlsx');
   }
 
   Future<bool> filesExist(PayrollPeriod period) async {
@@ -58,8 +76,18 @@ class PeriodFileManager {
   /// Both files are built inside a spawned isolate (see safe_xlsx_write.dart)
   /// so this doesn't block the UI isolate at app startup either.
   Future<void> ensureFilesExist(PayrollPeriod period, AppSettings settings) async {
-    final mileageFile = await mileageReportFile(period);
-    if (!await mileageFile.exists()) {
+    final dir = await _reportsDir();
+    final prefix = sanitizedFilenamePrefix(settings.firstName);
+    final namePrefix = prefix.isEmpty ? '' : '${prefix}_';
+
+    // Section 5: search first (prefix-agnostic) -- an already-existing file,
+    // prefixed or not, must be found and left alone. Only when nothing at
+    // all matches do we create a new one, named with *today's* Settings
+    // first name (not the combined fullName used for the in-file B3/C2
+    // cells -- the filename prefix and the in-file name are separate uses).
+    final existingMileage = await findPeriodFile(dir, 'MileageReport', period.fileId);
+    if (existingMileage == null) {
+      final mileageFile = File('${dir.path}/${namePrefix}MileageReport_${period.fileId}.xlsx');
       await createMileagePeriod(
         mileageFile,
         periodLabel: periodLabel(period),
@@ -71,8 +99,9 @@ class PeriodFileManager {
       );
     }
 
-    final timesheetFileHandle = await timesheetFile(period);
-    if (!await timesheetFileHandle.exists()) {
+    final existingTimesheet = await findPeriodFile(dir, 'Timesheet', period.fileId);
+    if (existingTimesheet == null) {
+      final timesheetFileHandle = File('${dir.path}/${namePrefix}Timesheet_${period.fileId}.xlsx');
       await createTimesheetPeriod(
         timesheetFileHandle,
         employeeName: settings.fullName,
@@ -86,6 +115,11 @@ class PeriodFileManager {
   /// Deletes file pairs for periods outside the retention window relative
   /// to [now], skipping [currentPeriod] entirely (section 11). A `never`
   /// policy (null window) deletes anything that isn't the current period.
+  ///
+  /// An ambiguous period (two+ candidate files) is skipped, not resolved by
+  /// guessing which one to delete -- this runs unattended at every startup
+  /// with no user available to arbitrate, so deleting the wrong file would
+  /// be silent, unrecoverable data loss (section 5: "не выбирать наугад").
   Future<void> cleanupAccordingToRetention({
     required List<PayrollPeriod> allPeriods,
     required PayrollPeriod currentPeriod,
@@ -93,16 +127,21 @@ class PeriodFileManager {
     required DateTime now,
   }) async {
     final windowDays = retention.windowDays;
+    final dir = await _reportsDir();
     for (final period in allPeriods) {
       if (period.key == currentPeriod.key) continue;
       final ageDays = now.difference(period.end).inDays;
       final shouldDelete = windowDays == null || ageDays > windowDays;
       if (!shouldDelete) continue;
 
-      final mileage = await mileageReportFile(period);
-      final timesheet = await timesheetFile(period);
-      if (await mileage.exists()) await mileage.delete();
-      if (await timesheet.exists()) await timesheet.delete();
+      try {
+        final mileage = await findPeriodFile(dir, 'MileageReport', period.fileId);
+        if (mileage != null) await mileage.delete();
+        final timesheet = await findPeriodFile(dir, 'Timesheet', period.fileId);
+        if (timesheet != null) await timesheet.delete();
+      } on PeriodFileAmbiguousException {
+        continue;
+      }
     }
   }
 
@@ -115,5 +154,47 @@ class PeriodFileManager {
     }
     result.sort((a, b) => b.start.compareTo(a.start));
     return result;
+  }
+
+  /// Section 5: finds the file matching `<kind>_<fileId>.xlsx` in [dir],
+  /// tolerating any (or no) prefix ending in `_` -- a Settings name change
+  /// must never orphan a file created under the old name, and files created
+  /// by a pre-update build have no prefix at all. Returns null if none
+  /// exist yet. Throws [PeriodFileAmbiguousException] if more than one
+  /// candidate matches -- never silently pick one.
+  ///
+  /// The pattern requires the name to end in exactly `.xlsx`, so it never
+  /// matches the atomic-write temp file (`....xlsx.tmp`, section 13 п.8) or
+  /// a backup (`....xlsx.bak`) -- though backups already live in a separate
+  /// directory ([BackupManager]) and would never actually be passed here.
+  ///
+  /// `static` and a plain [Directory] (not path_provider) so it's directly
+  /// unit-testable, mirroring [BackupManager]'s static-method split between
+  /// platform path resolution and plain-`File` logic.
+  static Future<File?> findPeriodFile(Directory dir, String kind, String fileId) async {
+    final pattern = RegExp('^(.*_)?${RegExp.escape(kind)}_${RegExp.escape(fileId)}\\.xlsx\$');
+    final matches = <String>[];
+    await for (final entity in dir.list()) {
+      if (entity is! File) continue;
+      final name = entity.uri.pathSegments.last;
+      if (pattern.hasMatch(name)) matches.add(name);
+    }
+    if (matches.length > 1) {
+      throw PeriodFileAmbiguousException(kind, matches);
+    }
+    if (matches.isEmpty) return null;
+    return File('${dir.path}/${matches.single}');
+  }
+
+  /// Section 5: sanitizes [name] for use as a filename prefix -- strips
+  /// characters illegal in file names plus whitespace, collapsing runs into
+  /// a single underscore and trimming the edges. Returns `''` (never a bare
+  /// underscore or other placeholder) if nothing meaningful survives -- a
+  /// blank or symbols-only Settings name must produce no prefix at all
+  /// ("вырожденные имена").
+  static String sanitizedFilenamePrefix(String name) {
+    final replaced = name.trim().replaceAll(RegExp(r'[/\\:*?"<>|\s]+'), '_');
+    final trimmed = replaced.replaceAll(RegExp(r'^_+|_+$'), '');
+    return trimmed.replaceAll('_', '').isEmpty ? '' : trimmed;
   }
 }
