@@ -97,8 +97,8 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
 
       if (mounted) Navigator.of(context).pop(true);
     } on MileageReportRowsExhaustedException {
-      setState(() => _busy = false);
       if (mounted) {
+        setState(() => _busy = false);
         showDialog<void>(
           context: context,
           builder: (context) => AlertDialog(
@@ -111,8 +111,8 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
         );
       }
     } catch (e) {
-      setState(() => _busy = false);
       if (mounted) {
+        setState(() => _busy = false);
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(t(context, 'drivingDetails.saveError', {'error': '$e'}))));
       }

@@ -190,49 +190,59 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
       _error = null;
     });
 
-    final period = PayrollPeriod(
-      key: widget.existing?.key ?? PayrollPeriod.newKey(),
-      start: _start,
-      end: _end,
-      due: _dueDateTime,
-      weekendAltDue: _weekendAltDueDateTime,
-      statHolidays: _statHolidays
-          .map((h) => StatHoliday(name: h.name.trim(), date: h.date!))
-          .toList(),
-      kmRate: _kmRate,
-    );
+    try {
+      final period = PayrollPeriod(
+        key: widget.existing?.key ?? PayrollPeriod.newKey(),
+        start: _start,
+        end: _end,
+        due: _dueDateTime,
+        weekendAltDue: _weekendAltDueDateTime,
+        statHolidays: _statHolidays
+            .map((h) => StatHoliday(name: h.name.trim(), date: h.date!))
+            .toList(),
+        kmRate: _kmRate,
+      );
 
-    final repo = PeriodRepository();
-    if (widget.existing != null) {
-      await repo.updatePeriod(period);
-    } else {
-      await repo.addPeriod(period);
-    }
-
-    // Section 6.2, second rate-change path: editing an existing period's
-    // own rate field updates G1 + Travel in THAT period's file specifically
-    // (including an archival one) -- distinct from the Settings-default
-    // path (settings_screen.dart), which only ever touches the current
-    // period. A cleared field (back to "use the default") still needs G1
-    // updated -- otherwise it would keep whatever explicit rate was there
-    // before, permanently, since a filled G1 is normally authoritative.
-    final oldRate = widget.existing?.kmRate;
-    final newRate = period.kmRate;
-    final rateChanged = widget.existing != null &&
-        ((oldRate == null) != (newRate == null) ||
-            (oldRate != null && newRate != null && !MileageReportEngine.ratesEqual(oldRate, newRate)));
-    if (rateChanged) {
-      final file = await PeriodFileManager().mileageReportFile(period);
-      if (await file.exists()) {
-        final effectiveRate = newRate ?? (await SettingsRepository().load()).kmRate;
-        await changeMileagePeriodRate(file, newRate: effectiveRate);
+      // Section 6.2, second rate-change path: editing an existing period's
+      // own rate field updates G1 + Travel in THAT period's file
+      // specifically (including an archival one) -- distinct from the
+      // Settings-default path (settings_screen.dart), which only ever
+      // touches the current period. A cleared field (back to "use the
+      // default") still needs G1 updated -- otherwise it would keep
+      // whatever explicit rate was there before, permanently, since a
+      // filled G1 is normally authoritative. The file write happens BEFORE
+      // the period-repo persist below so a failed file write can never
+      // leave period.kmRate and the file's G1 silently diverged (section
+      // 6.2: "never only one of the two").
+      final oldRate = widget.existing?.kmRate;
+      final newRate = period.kmRate;
+      final rateChanged = widget.existing != null &&
+          ((oldRate == null) != (newRate == null) ||
+              (oldRate != null && newRate != null && !MileageReportEngine.ratesEqual(oldRate, newRate)));
+      if (rateChanged) {
+        final file = await PeriodFileManager().mileageReportFile(period);
+        if (await file.exists()) {
+          final effectiveRate = newRate ?? (await SettingsRepository().load()).kmRate;
+          await changeMileagePeriodRate(file, newRate: effectiveRate);
+        }
       }
-    }
 
-    if (!mounted) return;
-    widget.onSaved?.call(period);
-    if (Navigator.of(context).canPop()) {
-      Navigator.of(context).pop(period);
+      final repo = PeriodRepository();
+      if (widget.existing != null) {
+        await repo.updatePeriod(period);
+      } else {
+        await repo.addPeriod(period);
+      }
+
+      if (!mounted) return;
+      widget.onSaved?.call(period);
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop(period);
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = t(context, 'addPeriod.saveError', {'error': '$e'}));
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 

@@ -64,6 +64,15 @@ class XlsxIntegrityException implements Exception {
 
 final _backupManager = BackupManager();
 
+/// Ceiling on how long a spawned write/read isolate is allowed to run
+/// before it's considered hung rather than just slow. Real-device writes
+/// are measured at "several seconds" (see the module doc above) even for
+/// the heaviest case (period creation, full 7-sheet heal) -- 60s leaves
+/// generous headroom above that while still turning a genuine hang (not a
+/// crash, which `onError` already catches) into a surfaced error instead
+/// of an indefinitely stuck "saving" UI (audit 2026-08-18, Пакет 22).
+const _isolateTimeout = Duration(seconds: 60);
+
 /// Replaces [target]'s content with [bytes] atomically (section 13, step 8):
 /// write to a sibling temp file first, then rename it over [target]. A
 /// rename within the same filesystem either completes wholly or not at all,
@@ -75,8 +84,23 @@ final _backupManager = BackupManager();
 /// 5) and be mistaken for a second candidate file.
 Future<void> _atomicWrite(File target, Uint8List bytes) async {
   final tmp = File('${target.path}.tmp');
-  await tmp.writeAsBytes(bytes, flush: true);
-  await tmp.rename(target.path);
+  try {
+    await tmp.writeAsBytes(bytes, flush: true);
+    await tmp.rename(target.path);
+  } catch (e) {
+    // If the write to the temp file itself failed (e.g. disk full) before
+    // the rename, don't leave a partial/orphaned `.tmp` sitting next to the
+    // real file forever -- purely a storage-cleanliness concern, [target]
+    // itself was never at risk either way (audit 2026-08-18, Пакет 22).
+    if (await tmp.exists()) {
+      try {
+        await tmp.delete();
+      } catch (_) {
+        // Best-effort cleanup only -- the original [e] is what matters.
+      }
+    }
+    rethrow;
+  }
 }
 
 Uint8List? _mileageTemplateBytesCache;
@@ -196,13 +220,19 @@ void _mileageIsolateEntry(_MileageRequest req) {
       req.replyPort.send(StateError('excel.encode() returned null while healing cell styles'));
       return;
     }
+    // The `excel`-package cell-style/merge-cell defects raw_style_patch.dart
+    // repairs (font/border/fill, and cells dropped from merged ranges) are
+    // workbook-global -- any write anywhere can corrupt cells on sheets
+    // never touched this write, including the 5 hidden sheets. The cheap
+    // raw-XML per-sheet passes here always cover every sheet, independent
+    // of `healHiddenSheets` (which only gates the expensive in-memory
+    // `healMileageReportStyles` full heal above -- that's the real perf
+    // cost, per style_heal.dart's own doc comment, not this raw-XML pass).
     final patchedBytes = patchRawXlsxStyles(
       Uint8List.fromList(healedBytes),
       templateBytes,
       allSheets: [...mileageVisibleSheets, ...mileageHiddenSheets],
-      alignmentSheets: req.healHiddenSheets
-          ? [...mileageVisibleSheets, ...mileageHiddenSheets]
-          : mileageVisibleSheets,
+      alignmentSheets: [...mileageVisibleSheets, ...mileageHiddenSheets],
     );
 
     req.replyPort.send(SaveXlsxPhase.verifying);
@@ -244,8 +274,9 @@ Future<_MileageWriteResult> _runMileageIsolate({
     }
   });
 
+  Isolate? isolate;
   try {
-    await Isolate.spawn(
+    isolate = await Isolate.spawn(
       _mileageIsolateEntry,
       _MileageRequest(
         sourceBytes: sourceBytes,
@@ -256,8 +287,10 @@ Future<_MileageWriteResult> _runMileageIsolate({
       ),
       onError: errorPort.sendPort,
     );
-    return await completer.future;
+    return await completer.future.timeout(_isolateTimeout,
+        onTimeout: () => throw StateError('Mileage write isolate timed out after $_isolateTimeout'));
   } finally {
+    isolate?.kill(priority: Isolate.immediate);
     await portSub.cancel();
     await errorSub.cancel();
     port.close();
@@ -502,14 +535,17 @@ Future<_TimesheetWriteResult> _runTimesheetIsolate({
     }
   });
 
+  Isolate? isolate;
   try {
-    await Isolate.spawn(
+    isolate = await Isolate.spawn(
       _timesheetIsolateEntry,
       _TimesheetRequest(sourceBytes: sourceBytes, templateBytes: templateBytes, op: op, replyPort: port.sendPort),
       onError: errorPort.sendPort,
     );
-    return await completer.future;
+    return await completer.future.timeout(_isolateTimeout,
+        onTimeout: () => throw StateError('Timesheet write isolate timed out after $_isolateTimeout'));
   } finally {
+    isolate?.kill(priority: Isolate.immediate);
     await portSub.cancel();
     await errorSub.cancel();
     port.close();
@@ -643,14 +679,17 @@ Future<TimesheetSummary> readTimesheetSummary(File file) async {
     }
   });
 
+  Isolate? isolate;
   try {
-    await Isolate.spawn(
+    isolate = await Isolate.spawn(
       _summarizeTimesheetIsolateEntry,
       _SummarizeTimesheetRequest(sourceBytes, port.sendPort),
       onError: errorPort.sendPort,
     );
-    return await completer.future;
+    return await completer.future.timeout(_isolateTimeout,
+        onTimeout: () => throw StateError('Timesheet summary isolate timed out after $_isolateTimeout'));
   } finally {
+    isolate?.kill(priority: Isolate.immediate);
     await portSub.cancel();
     await errorSub.cancel();
     port.close();

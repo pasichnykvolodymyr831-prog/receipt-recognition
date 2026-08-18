@@ -73,20 +73,21 @@ IntegrityReport checkMileageReportIntegrity({
     issues.add('Sheet "Truman Homes" missing');
   } else {
     for (var row = 8; row <= 27; row++) {
-      _expectFormula(sheet, 'I$row', issues);
-      _expectFormula(sheet, 'L$row', issues);
+      _expectFormula(sheet, templateSheet, 'I$row', issues);
+      _expectFormula(sheet, templateSheet, 'L$row', issues);
     }
     for (final col in ['C', 'D', 'E', 'F', 'G', 'H', 'K']) {
-      _expectFormula(sheet, '${col}28', issues);
+      _expectFormula(sheet, templateSheet, '${col}28', issues);
     }
-    _expectFormula(sheet, 'L28', issues);
+    _expectFormula(sheet, templateSheet, 'L28', issues);
     _expectNotFormula(sheet, 'I28', issues); // hardcoded 0 by design, section 6.1
-    _expectFormula(sheet, 'M30', issues);
+    _expectFormula(sheet, templateSheet, 'M30', issues);
 
     if (templateSheet != null) {
       for (final a1 in mileageTrumanHomesManagedCells) {
         _expectStylePreserved(sheet, templateSheet, a1, styleWarnings);
       }
+      _expectMergeRangesPreserved(newExcel, template, 'Truman Homes', issues);
     }
   }
 
@@ -96,15 +97,16 @@ IntegrityReport checkMileageReportIntegrity({
     issues.add('Sheet "Driving Details" missing');
   } else {
     for (var row = 2; row <= 18; row++) {
-      _expectFormula(drivingSheet, 'D$row', issues);
+      _expectFormula(drivingSheet, templateDrivingSheet, 'D$row', issues);
     }
-    _expectFormula(drivingSheet, 'C19', issues);
-    _expectFormula(drivingSheet, 'D19', issues);
+    _expectFormula(drivingSheet, templateDrivingSheet, 'C19', issues);
+    _expectFormula(drivingSheet, templateDrivingSheet, 'D19', issues);
 
     if (templateDrivingSheet != null) {
       for (final a1 in mileageDrivingDetailsManagedCells) {
         _expectStylePreserved(drivingSheet, templateDrivingSheet, a1, styleWarnings);
       }
+      _expectMergeRangesPreserved(newExcel, template, 'Driving Details', issues);
     }
   }
 
@@ -157,10 +159,24 @@ IntegrityReport checkTimesheetIntegrity({
   return IntegrityReport(issues.isEmpty, issues, styleWarnings: styleWarnings);
 }
 
-void _expectFormula(Sheet sheet, String a1, List<String> issues) {
+/// Verifies [a1] is still a formula cell (section 13 п.8's minimum
+/// guarantee, always checked) and, when [templateSheet] is given and its
+/// own cell at [a1] is itself a formula, that the formula *text* still
+/// matches the template's exactly -- not just "is a formula" (a corrupted
+/// or shifted formula, e.g. a term dropped from `+H8+G8+...` or a column
+/// ref off by one, would previously pass this check silently). The app
+/// never writes formula strings itself (they live in the template and are
+/// only ever carried through re-encode), so the template is always the
+/// correct reference text to compare against.
+void _expectFormula(Sheet sheet, Sheet? templateSheet, String a1, List<String> issues) {
   final value = sheet.cell(CellIndex.indexByString(a1)).value;
   if (value is! FormulaCellValue) {
     issues.add('Expected formula at $a1 but found ${value.runtimeType}');
+    return;
+  }
+  final templateValue = templateSheet?.cell(CellIndex.indexByString(a1)).value;
+  if (templateValue is FormulaCellValue && templateValue.formula != value.formula) {
+    issues.add('Formula at $a1 changed: expected "${templateValue.formula}", found "${value.formula}"');
   }
 }
 
@@ -196,8 +212,15 @@ void _expectStylePreserved(Sheet sheet, Sheet templateSheet, String a1, List<Str
   // ignores number formats on text, so re-deriving a compatible format
   // there isn't a style regression; the `excel` package itself falls back
   // to General for exactly this reason when it re-reads such a cell.
-  if (templateStyle.numberFormat.accepts(cell.value) &&
-      style.numberFormat.formatCode != templateStyle.numberFormat.formatCode) {
+  //
+  // `NumFormat.accepts(null)` is always `true` for every subclass in the
+  // `excel` package (v4.0.6) -- so this exemption must require a real,
+  // non-null value before applying, or it silently stops checking
+  // number_format on every not-yet-written managed cell (audit 2026-08-18,
+  // Пакет 16).
+  final cellValue = cell.value;
+  final formatExempt = cellValue != null && !templateStyle.numberFormat.accepts(cellValue);
+  if (!formatExempt && style.numberFormat.formatCode != templateStyle.numberFormat.formatCode) {
     issues.add(
         'Cell $a1 number_format changed: expected "${templateStyle.numberFormat.formatCode}", found "${style.numberFormat.formatCode}"');
   }
@@ -210,6 +233,27 @@ void _expectStylePreserved(Sheet sheet, Sheet templateSheet, String a1, List<Str
       style.leftBorder != templateStyle.leftBorder ||
       style.rightBorder != templateStyle.rightBorder) {
     issues.add('Cell $a1 border changed from the template');
+  }
+}
+
+/// Verifies [sheetName]'s declared merge ranges (section 13 п.6) still
+/// exactly match [template]'s -- not "the continuation cell exists"
+/// (already guarded by raw_style_patch.dart's `_insertMissingMergedCells`,
+/// defect #6), but "the merged range itself is the same one the template
+/// declares" (e.g. `I8:J8`). A future write path that silently un-merges a
+/// range, or merges the wrong one, would open fine and pass every other
+/// check today -- exactly the "looks correct, wrong in real Excel" failure
+/// class this project has repeatedly hit only on a real device file.
+void _expectMergeRangesPreserved(Excel newExcel, Excel template, String sheetName, List<String> issues) {
+  final expected = template.getMergedCells(sheetName).toSet();
+  final actual = newExcel.getMergedCells(sheetName).toSet();
+  final missing = expected.difference(actual);
+  final extra = actual.difference(expected);
+  if (missing.isNotEmpty) {
+    issues.add('Sheet "$sheetName" lost merge range(s) from the template: ${missing.join(", ")}');
+  }
+  if (extra.isNotEmpty) {
+    issues.add('Sheet "$sheetName" has unexpected merge range(s) not in the template: ${extra.join(", ")}');
   }
 }
 

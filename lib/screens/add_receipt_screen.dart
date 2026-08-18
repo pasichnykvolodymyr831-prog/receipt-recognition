@@ -59,6 +59,7 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
     try {
       final picker = ImagePicker();
       final photo = await picker.pickImage(source: source, imageQuality: 85);
+      if (!mounted) return;
       if (photo == null) {
         setState(() => _busy = false);
         return;
@@ -85,6 +86,7 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
       }
 
       final parsed = parseReceiptLines(lines, today: DateTime.now());
+      if (!mounted) return;
       setState(() {
         _mode = _EntryMode.ocr;
         _editing = false;
@@ -96,8 +98,8 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
         _busy = false;
       });
     } catch (e) {
-      setState(() => _busy = false);
       if (mounted) {
+        setState(() => _busy = false);
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(t(context, 'addReceipt.ocrError', {'error': '$e'}))));
       }
@@ -206,8 +208,8 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
 
       if (mounted) Navigator.of(context).pop(true);
     } on MileageReportRowsExhaustedException {
-      setState(() => _busy = false);
       if (mounted) {
+        setState(() => _busy = false);
         showDialog<void>(
           context: context,
           builder: (context) => AlertDialog(
@@ -220,8 +222,8 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
         );
       }
     } catch (e) {
-      setState(() => _busy = false);
       if (mounted) {
+        setState(() => _busy = false);
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(t(context, 'addReceipt.saveError', {'error': '$e'}))));
       }

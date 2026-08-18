@@ -60,9 +60,17 @@ class BackupManager {
   }
 
   /// Plain-File version of [backupBeforeWrite]'s logic (unit-testable).
+  /// Writes via a tmp-file-then-rename, the same atomic-replace pattern
+  /// `safe_xlsx_write.dart`'s `_atomicWrite` already uses for the primary
+  /// period file -- previously this was the one write in the whole pipeline
+  /// that wrote `backupSlot` directly, so a crash mid-write here could leave
+  /// a truncated `.bak` (audit 2026-08-18, Пакет 21).
   static Future<void> backupBeforeWriteTo(File targetFile, File backupSlot) async {
     if (!await targetFile.exists()) return;
-    await backupSlot.writeAsBytes(await targetFile.readAsBytes());
+    final bytes = await targetFile.readAsBytes();
+    final tmp = File('${backupSlot.path}.tmp');
+    await tmp.writeAsBytes(bytes, flush: true);
+    await tmp.rename(backupSlot.path);
   }
 
   /// Plain-File version of [restoreIfCorrupted]'s logic (unit-testable).

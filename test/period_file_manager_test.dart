@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 import 'package:expenseflow/models/payroll_period.dart';
+import 'package:expenseflow/services/backup_manager.dart';
 import 'package:expenseflow/services/period_file_manager.dart';
 import 'package:expenseflow/services/settings_repository.dart';
 
@@ -182,6 +183,119 @@ void main() {
       final reportsDir = Directory('${docsDir.path}/reports');
       final entries = reportsDir.listSync().map((e) => e.uri.pathSegments.last).toList();
       expect(entries, unorderedEquals(['Truman_MileageReport_2026-08-09_2026-08-23.xlsx', 'Truman_Timesheet_2026-08-09_2026-08-23.xlsx']));
+    });
+  });
+
+  group('cleanupAccordingToRetention (Пакет 21: backup deletion, audit 2026-08-18)', () {
+    late Directory docsDir;
+    late Directory reportsDir;
+    late Directory backupsDir;
+
+    setUp(() {
+      docsDir = Directory.systemTemp.createTempSync('period_file_manager_retention_docs');
+      PathProviderPlatform.instance = _FakePathProviderPlatform(docsDir.path);
+      reportsDir = Directory('${docsDir.path}/reports')..createSync(recursive: true);
+      backupsDir = Directory('${docsDir.path}/backups')..createSync(recursive: true);
+    });
+
+    tearDown(() {
+      docsDir.deleteSync(recursive: true);
+    });
+
+    final oldPeriod = PayrollPeriod(
+      key: 'old',
+      start: DateTime(2020, 1, 9),
+      end: DateTime(2020, 1, 23),
+      due: DateTime(2020, 1, 21),
+    );
+    final currentPeriod = PayrollPeriod(
+      key: 'current',
+      start: DateTime(2026, 8, 9),
+      end: DateTime(2026, 8, 23),
+      due: DateTime(2026, 8, 21),
+    );
+
+    void writeReportAndBackup(String kind, String fileId) {
+      File('${reportsDir.path}/${kind}_$fileId.xlsx').writeAsBytesSync([1]);
+      File('${backupsDir.path}/${kind}_$fileId.xlsx.bak').writeAsBytesSync([1]);
+    }
+
+    test('deletes both the report file and its .bak when a period falls outside the retention window', () async {
+      writeReportAndBackup('MileageReport', oldPeriod.fileId);
+      writeReportAndBackup('Timesheet', oldPeriod.fileId);
+
+      await PeriodFileManager().cleanupAccordingToRetention(
+        allPeriods: [oldPeriod, currentPeriod],
+        currentPeriod: currentPeriod,
+        retention: RetentionPolicy.oneMonth,
+        now: DateTime(2026, 8, 20),
+      );
+
+      expect(File('${reportsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx').existsSync(), false);
+      expect(File('${backupsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx.bak').existsSync(), false,
+          reason: 'the backup must be deleted alongside the report file, not left to accumulate forever');
+      expect(File('${reportsDir.path}/Timesheet_${oldPeriod.fileId}.xlsx').existsSync(), false);
+      expect(File('${backupsDir.path}/Timesheet_${oldPeriod.fileId}.xlsx.bak').existsSync(), false);
+    });
+
+    test('leaves the current period\'s files and backups untouched', () async {
+      writeReportAndBackup('MileageReport', currentPeriod.fileId);
+      writeReportAndBackup('Timesheet', currentPeriod.fileId);
+
+      await PeriodFileManager().cleanupAccordingToRetention(
+        allPeriods: [currentPeriod],
+        currentPeriod: currentPeriod,
+        retention: RetentionPolicy.never,
+        now: DateTime(2026, 8, 20),
+      );
+
+      expect(File('${reportsDir.path}/MileageReport_${currentPeriod.fileId}.xlsx').existsSync(), true);
+      expect(File('${backupsDir.path}/MileageReport_${currentPeriod.fileId}.xlsx.bak').existsSync(), true);
+    });
+
+    test('a report file with no backup on disk is still deleted cleanly (backup deletion is best-effort)', () async {
+      File('${reportsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx').writeAsBytesSync([1]);
+      File('${reportsDir.path}/Timesheet_${oldPeriod.fileId}.xlsx').writeAsBytesSync([1]);
+
+      await PeriodFileManager().cleanupAccordingToRetention(
+        allPeriods: [oldPeriod, currentPeriod],
+        currentPeriod: currentPeriod,
+        retention: RetentionPolicy.oneMonth,
+        now: DateTime(2026, 8, 20),
+      );
+
+      expect(File('${reportsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx').existsSync(), false);
+    });
+
+    test('an ambiguous period is skipped entirely -- its backup is not touched either', () async {
+      File('${reportsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx').writeAsBytesSync([1]);
+      File('${reportsDir.path}/Prefix_MileageReport_${oldPeriod.fileId}.xlsx').writeAsBytesSync([1]);
+      File('${backupsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx.bak').writeAsBytesSync([1]);
+
+      await PeriodFileManager().cleanupAccordingToRetention(
+        allPeriods: [oldPeriod, currentPeriod],
+        currentPeriod: currentPeriod,
+        retention: RetentionPolicy.oneMonth,
+        now: DateTime(2026, 8, 20),
+      );
+
+      expect(File('${reportsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx').existsSync(), true);
+      expect(File('${reportsDir.path}/Prefix_MileageReport_${oldPeriod.fileId}.xlsx').existsSync(), true);
+      expect(File('${backupsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx.bak').existsSync(), true);
+    });
+
+    test('injecting a custom BackupManager is honored (constructor wiring)', () async {
+      writeReportAndBackup('MileageReport', oldPeriod.fileId);
+      final manager = PeriodFileManager(backupManager: BackupManager());
+
+      await manager.cleanupAccordingToRetention(
+        allPeriods: [oldPeriod, currentPeriod],
+        currentPeriod: currentPeriod,
+        retention: RetentionPolicy.oneMonth,
+        now: DateTime(2026, 8, 20),
+      );
+
+      expect(File('${backupsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx.bak').existsSync(), false);
     });
   });
 }

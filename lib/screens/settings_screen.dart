@@ -67,39 +67,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _save() async {
     if (!_validate()) return;
     setState(() => _saving = true);
-    final newKmRate = parseDecimal(_kmRateController.text)!;
-    final newSettings = AppSettings(
-      languageCode: _languageCode,
-      firstName: _firstNameController.text.trim(),
-      lastName: _lastNameController.text.trim(),
-      phone: _phoneController.text.trim(),
-      retention: _retention,
-      kmRate: newKmRate,
-    );
-    await _repo.save(newSettings);
+    try {
+      final newKmRate = parseDecimal(_kmRateController.text)!;
+      final newSettings = AppSettings(
+        languageCode: _languageCode,
+        firstName: _firstNameController.text.trim(),
+        lastName: _lastNameController.text.trim(),
+        phone: _phoneController.text.trim(),
+        retention: _retention,
+        kmRate: newKmRate,
+      );
+      await _repo.save(newSettings);
 
-    // Section 6.2, first rate-change path: a changed Settings default
-    // updates the calendar-current period's own km_rate AND its file's G1
-    // together -- future periods pick up the new default at creation time
-    // on their own, so only the current one needs updating here.
-    if (!MileageReportEngine.ratesEqual(_originalKmRate, newKmRate)) {
-      final periodRepo = PeriodRepository();
-      final periods = await periodRepo.loadAll();
-      final current = periodRepo.findCurrent(periods, DateTime.now());
-      if (current != null) {
-        await periodRepo.updatePeriod(current.copyWith(kmRate: newKmRate));
-        final file = await PeriodFileManager().mileageReportFile(current);
-        if (await file.exists()) {
-          await changeMileagePeriodRate(file, newRate: newKmRate);
+      // Section 6.2, first rate-change path: a changed Settings default
+      // updates the calendar-current period's own km_rate AND its file's G1
+      // together -- future periods pick up the new default at creation time
+      // on their own, so only the current one needs updating here. The file
+      // write happens BEFORE the period-repo persist so a failed file write
+      // (structure error, occupied row, integrity failure -- all real
+      // possibilities per section 13) can never leave period.kmRate and the
+      // file's G1 silently diverged (section 6.2: "never only one of the
+      // two") -- on failure, period.kmRate simply stays whatever it was.
+      if (!MileageReportEngine.ratesEqual(_originalKmRate, newKmRate)) {
+        final periodRepo = PeriodRepository();
+        final periods = await periodRepo.loadAll();
+        final current = periodRepo.findCurrent(periods, DateTime.now());
+        if (current != null) {
+          final file = await PeriodFileManager().mileageReportFile(current);
+          if (await file.exists()) {
+            await changeMileagePeriodRate(file, newRate: newKmRate);
+          }
+          await periodRepo.updatePeriod(current.copyWith(kmRate: newKmRate));
         }
+        _originalKmRate = newKmRate;
       }
-      _originalKmRate = newKmRate;
-    }
 
-    if (mounted) {
-      AppLocale.of(context).setLanguage(_languageCode);
-      setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t(context, 'settings.saved'))));
+      if (mounted) {
+        AppLocale.of(context).setLanguage(_languageCode);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t(context, 'settings.saved'))));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(t(context, 'settings.saveError', {'error': '$e'}))));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 

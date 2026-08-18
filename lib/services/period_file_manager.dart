@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/payroll_period.dart';
+import 'backup_manager.dart';
 import 'safe_xlsx_write.dart';
 import 'settings_repository.dart';
 
@@ -37,6 +38,10 @@ class PeriodFileAmbiguousException implements Exception {
 /// `<prefix_>Timesheet_<start>_<end>.xlsx`, where `<prefix_>` is the
 /// sanitized Settings first name at the time of creation, or nothing.
 class PeriodFileManager {
+  PeriodFileManager({BackupManager? backupManager}) : _backupManager = backupManager ?? BackupManager();
+
+  final BackupManager _backupManager;
+
   Future<Directory> _reportsDir() async {
     final dir = await getApplicationDocumentsDirectory();
     final reports = Directory('${dir.path}/reports');
@@ -115,6 +120,10 @@ class PeriodFileManager {
   /// Deletes file pairs for periods outside the retention window relative
   /// to [now], skipping [currentPeriod] entirely (section 11). A `never`
   /// policy (null window) deletes anything that isn't the current period.
+  /// Each deleted file's backup (see [BackupManager]) is deleted alongside
+  /// it -- otherwise backups of periods the user can no longer even see
+  /// would silently accumulate on the phone's storage forever (section 13
+  /// п.5's closing requirement; audit 2026-08-18, Пакет 21).
   ///
   /// An ambiguous period (two+ candidate files) is skipped, not resolved by
   /// guessing which one to delete -- this runs unattended at every startup
@@ -136,13 +145,19 @@ class PeriodFileManager {
 
       try {
         final mileage = await findPeriodFile(dir, 'MileageReport', period.fileId);
-        if (mileage != null) await mileage.delete();
+        if (mileage != null) await _deleteWithBackup(mileage);
         final timesheet = await findPeriodFile(dir, 'Timesheet', period.fileId);
-        if (timesheet != null) await timesheet.delete();
+        if (timesheet != null) await _deleteWithBackup(timesheet);
       } on PeriodFileAmbiguousException {
         continue;
       }
     }
+  }
+
+  Future<void> _deleteWithBackup(File file) async {
+    await file.delete();
+    final backup = await _backupManager.backupFileFor(file);
+    if (await backup.exists()) await backup.delete();
   }
 
   /// Lists periods (from [allPeriods]) that currently have files on disk,

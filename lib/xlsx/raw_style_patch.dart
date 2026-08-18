@@ -4,15 +4,13 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 
-import '../utils/number_input.dart';
-import 'formula_eval.dart';
-
-/// Repairs six `excel`-package (v4.0.6) defects that its own object model
+/// Repairs seven `excel`-package (v4.0.6) defects that its own object model
 /// can never detect or fix, by working directly on the encoded xlsx bytes'
 /// raw XML -- the same "bypass the package" approach [xlsx_raw_inspect.dart]
 /// already uses for sheet-hidden state, applied here to cell style (font,
-/// border, fill, alignment), column widths/hidden state, row heights,
-/// formula cache values, and cells dropped from merged ranges:
+/// border, fill, alignment, number format), column widths/hidden state, row
+/// heights, formula cache values, cells dropped from merged ranges, and
+/// number-format-table bloat:
 ///
 /// 1. Alignment: `parse.dart`'s cellXf parser reads the `horizontal`/
 ///    `vertical` attributes off the `<xf>` node instead of its `<alignment>`
@@ -49,30 +47,13 @@ import 'formula_eval.dart';
 /// 5. Formula cache values: the package never evaluates formulas, and
 ///    round-trips "no computed value" as a *present but empty* `<v></v>`
 ///    (confirmed present even in the pristine, never-touched template)
-///    rather than a real number -- observed to make a real user's Excel
-///    never recalculate the formula on open (manual F9 required) despite
-///    `<calcPr fullCalcOnLoad="1">` already being set. Stripping the cached
-///    value outright fixes that (an absent `<v>` unambiguously tells Excel
-///    "no cache, please compute"), but introduced a second, narrower gap:
-///    Excel's Protected View (the sandbox any file carrying a Mark-of-the-
-///    Web opens into, e.g. anything the phone "Отправить"s over email/
-///    cloud) never runs the calculation engine at all while active, so a
-///    formula cell with no cached value renders as completely blank there
-///    until the user clicks "Enable Editing" -- confirmed by the user on a
-///    real device file. `_recomputeFormulaValues` closes that gap by
-///    actually evaluating each formula in Dart ([formula_eval.dart] --
-///    every real formula in these templates reduces to `SUM(range)`,
-///    `SUM(a*b)`, or a chain of `+cell+cell...`) and writing the real
-///    result as the cached `<v>`, so a non-recalculating viewer shows a
-///    correct value immediately. `fullCalcOnLoad` still forces a full,
-///    independent recalculation the moment real Excel *does* run its
-///    engine, so a bug in this evaluator can only ever affect a transient
-///    read-only preview, never the number the user actually edits against.
-///    Evaluation failure (unsupported syntax, a non-numeric operand, a
-///    circular reference) is never fatal -- it just leaves that one cell
-///    exactly as before, with no cached value at all.
-///    `_ensureFullCalcOnLoad` guarantees the workbook-level recalculation
-///    trigger is always set, not just observed to survive today.
+///    rather than a real number or an absent `<v>` -- observed to make a
+///    real user's Excel never recalculate the formula on open (manual F9
+///    required) despite `<calcPr fullCalcOnLoad="1">` already being set.
+///    `_stripFormulaValueCache` removes the cached value outright so an
+///    absent `<v>` unambiguously tells Excel "no cache, please compute";
+///    `_ensureFullCalcOnLoad` guarantees the workbook-level trigger for
+///    that computation is always set, not just observed to survive today.
 /// 6. Merged-cell cells vanish entirely: a cell that's part of a merged
 ///    range but was only ever given a style (never a *value* -- e.g. the
 ///    "J" half of an `I:J` merge, the app only ever writes into the anchor
@@ -87,6 +68,22 @@ import 'formula_eval.dart';
 ///    such missing cell, then leaves it for `_patchCellStyles` (which runs
 ///    immediately after, in the same per-sheet loop) to heal its style
 ///    exactly like any other cell.
+/// 7. Number-format table bloat: on every `.encode()`, the package doesn't
+///    preserve built-in numFmtIds (0-163) as built-in -- it materializes
+///    each one in use as a *new* custom `<numFmt>` entry and repoints every
+///    referencing `<xf>` at it. Since nothing marks a materialized entry as
+///    having originally been built-in, the next decode/re-encode cycle
+///    materializes it *again* into yet another new entry, compounding on
+///    every single write (confirmed empirically: +8 `cellXfs` entries
+///    referencing a custom numFmtId per write cycle against the real
+///    bundled template). A `styles.xml` left in that state risks Excel's
+///    strict loader rejecting the part outright and silently
+///    repairing-and-reformatting the workbook on open.
+///    `_canonicalizeBuiltinNumFmts` collapses any custom numFmt that's
+///    equivalent to a built-in code back onto the built-in id, breaking the
+///    compounding cycle; `_patchCellStyles` additionally compares each
+///    cell's resolved number-format *code* (not index) against the
+///    template's and repairs any mismatch, same as font/border/fill.
 ///
 /// Column-width/hidden, row-height, and formula-cache repairs are applied
 /// for every sheet named in [allSheets] (these are workbook-encode-time
@@ -97,6 +94,170 @@ import 'formula_eval.dart';
 /// same sheets style_heal.dart heals on this write, since properties 1-2
 /// above share the same root cause (a cell's `<xf>` no longer being the
 /// template's original entry).
+/// ECMA-376 (§18.8.30) built-in number format codes -- ids below 164 are
+/// implied by the standard and never listed explicitly in a workbook's own
+/// `<numFmts>`; ids 164+ are always document-local custom entries.
+const _builtinNumFmts = <int, String>{
+  0: 'General',
+  1: '0',
+  2: '0.00',
+  3: '#,##0',
+  4: '#,##0.00',
+  9: '0%',
+  10: '0.00%',
+  11: '0.00E+00',
+  12: '# ?/?',
+  13: '# ??/??',
+  14: 'mm-dd-yy',
+  15: 'd-mmm-yy',
+  16: 'd-mmm',
+  17: 'mmm-yy',
+  18: 'h:mm AM/PM',
+  19: 'h:mm:ss AM/PM',
+  20: 'h:mm',
+  21: 'h:mm:ss',
+  22: 'm/d/yy h:mm',
+  37: '#,##0 ;(#,##0)',
+  38: '#,##0 ;[Red](#,##0)',
+  39: '#,##0.00;(#,##0.00)',
+  40: '#,##0.00;[Red](#,##0.00)',
+  45: 'mm:ss',
+  46: '[h]:mm:ss',
+  47: 'mmss.0',
+  48: '##0.0E+0',
+  49: '@',
+};
+
+/// Custom numFmtId -> formatCode entries declared in a styles.xml's
+/// `<numFmts>` block, keyed by id (sparse, unlike fonts/fills/borders which
+/// are dense 0-based lists) since ids are the only stable cross-document
+/// reference for a custom format.
+Map<int, String> _numFmtsOf(XmlDocument stylesDoc) {
+  final result = <int, String>{};
+  final numFmtsElements = stylesDoc.findAllElements('numFmts');
+  if (numFmtsElements.isEmpty) return result;
+  for (final numFmt in numFmtsElements.first.findElements('numFmt')) {
+    final id = int.tryParse(numFmt.getAttribute('numFmtId') ?? '');
+    final code = numFmt.getAttribute('formatCode');
+    if (id != null && code != null) result[id] = code;
+  }
+  return result;
+}
+
+/// The format code an `<xf>`'s numFmtId resolves to within its own
+/// document, or null if it references neither a built-in id nor a listed
+/// custom one (shouldn't happen for a well-formed workbook, but a missing
+/// mapping should never crash the patch).
+String? _numFmtCodeOf(XmlElement xf, Map<int, String> customNumFmts) {
+  final id = int.tryParse(xf.getAttribute('numFmtId') ?? '0') ?? 0;
+  return _builtinNumFmts[id] ?? customNumFmts[id];
+}
+
+/// Finds an id in the output document whose format code is [desiredCode]
+/// (built-in first, then already-declared custom entries), or mints a new
+/// custom `<numFmt>` entry (next id past the highest currently in use) if
+/// none exists -- creating the `<numFmts>` element itself, inserted before
+/// `<fonts>` per the CT_Stylesheet schema's child order, if the output
+/// document doesn't have one yet. [outputNumFmts] is updated in place so
+/// later cells needing the same code reuse this entry instead of
+/// duplicating it.
+int _ensureNumFmtId(XmlDocument outputStylesDoc, Map<int, String> outputNumFmts, String desiredCode) {
+  for (final entry in _builtinNumFmts.entries) {
+    if (entry.value == desiredCode) return entry.key;
+  }
+  for (final entry in outputNumFmts.entries) {
+    if (entry.value == desiredCode) return entry.key;
+  }
+
+  final existing = outputStylesDoc.findAllElements('numFmts');
+  XmlElement numFmtsElement;
+  if (existing.isEmpty) {
+    numFmtsElement = XmlElement(XmlName('numFmts'), [XmlAttribute(XmlName('count'), '0')], []);
+    final fontsElement = outputStylesDoc.findAllElements('fonts').first;
+    fontsElement.parent!.children.insert(fontsElement.parent!.children.indexOf(fontsElement), numFmtsElement);
+  } else {
+    numFmtsElement = existing.first;
+  }
+
+  final newId = <int>[163, ...outputNumFmts.keys].reduce((a, b) => a > b ? a : b) + 1;
+  numFmtsElement.children.add(XmlElement(XmlName('numFmt'), [
+    XmlAttribute(XmlName('numFmtId'), '$newId'),
+    XmlAttribute(XmlName('formatCode'), desiredCode),
+  ], []));
+  outputNumFmts[newId] = desiredCode;
+  return newId;
+}
+
+/// Strips xlsx format-code escape backslashes (e.g. `d\-mmm\-yy` -> `d-mmm-yy`)
+/// so a custom numFmt's code can be compared against the (unescaped)
+/// built-in table for equivalence, not byte-identity.
+String _unescapeNumFmtCode(String code) => code.replaceAll(r'\', '');
+
+/// Fixes the root cause of the numFmts/cellXfs bloat documented in the
+/// module doc (defect #7): every time the `excel` package re-encodes a
+/// workbook, it doesn't preserve built-in numFmtIds (0-163) as built-in --
+/// it "materializes" each one actually in use as a *new* custom `<numFmt>`
+/// entry (164+) with an equivalent formatCode, and repoints every `<xf>`
+/// that used the built-in id at the new custom one. Decoding and
+/// re-encoding again materializes *those* into yet another new set, since
+/// nothing marks them as having originally been built-in -- compounding
+/// every single write.
+///
+/// This collapses any custom `<numFmt>` whose formatCode exactly matches
+/// (modulo escape backslashes) a built-in code back onto the built-in id,
+/// repoints every `<xf>` in `<cellXfs>` and `<cellStyleXfs>` that
+/// referenced the custom id, and removes the now-unreferenced `<numFmt>`
+/// entries. Deliberately only ever rewrites a `numFmtId` *attribute value*
+/// on existing `<xf>` elements -- it never changes the count, position, or
+/// identity of any `cellXfs`/`cellStyleXfs` entry, so every existing
+/// `<c s="N">`/`xfId="N"`/`<cols style="N">` reference stays exactly as
+/// valid (or invalid) as it already was. Must run before [patchRawXlsxStyles]
+/// captures its `outputXfs`/`outputNumFmts` snapshots, so the rest of that
+/// function sees the already-canonicalized table.
+void _canonicalizeBuiltinNumFmts(XmlDocument stylesDoc) {
+  final numFmtsElements = stylesDoc.findAllElements('numFmts');
+  if (numFmtsElements.isEmpty) return;
+  final numFmtsElement = numFmtsElements.first;
+
+  final toBuiltin = <int, int>{};
+  final toRemove = <XmlElement>[];
+  for (final numFmt in numFmtsElement.findElements('numFmt')) {
+    final id = int.tryParse(numFmt.getAttribute('numFmtId') ?? '');
+    final code = numFmt.getAttribute('formatCode');
+    if (id == null || code == null) continue;
+    final normalized = _unescapeNumFmtCode(code);
+    for (final builtin in _builtinNumFmts.entries) {
+      if (builtin.value == normalized) {
+        toBuiltin[id] = builtin.key;
+        toRemove.add(numFmt);
+        break;
+      }
+    }
+  }
+  if (toBuiltin.isEmpty) return;
+
+  for (final xf in [
+    ...stylesDoc.findAllElements('cellXfs').first.findElements('xf'),
+    ...stylesDoc.findAllElements('cellStyleXfs').first.findElements('xf'),
+  ]) {
+    final id = int.tryParse(xf.getAttribute('numFmtId') ?? '');
+    final mapped = id == null ? null : toBuiltin[id];
+    if (mapped != null) {
+      xf.setAttribute('numFmtId', '$mapped');
+    }
+  }
+
+  for (final numFmt in toRemove) {
+    numFmt.parent?.children.remove(numFmt);
+  }
+  final remaining = numFmtsElement.findElements('numFmt').length;
+  if (remaining == 0) {
+    numFmtsElement.parent?.children.remove(numFmtsElement);
+  } else {
+    numFmtsElement.setAttribute('count', '$remaining');
+  }
+}
+
 Uint8List patchRawXlsxStyles(
   Uint8List encodedBytes,
   Uint8List templateBytes, {
@@ -114,6 +275,7 @@ Uint8List patchRawXlsxStyles(
 
   final stylesDoc = _readXml(archive, 'xl/styles.xml');
   final templateStylesDoc = _readXml(templateArchive, 'xl/styles.xml');
+  _canonicalizeBuiltinNumFmts(stylesDoc);
   final cellXfsElement = stylesDoc.findAllElements('cellXfs').first;
   final outputXfs = cellXfsElement.findElements('xf').toList(growable: false);
   final templateXfs = templateStylesDoc.findAllElements('cellXfs').first.findElements('xf').toList(growable: false);
@@ -127,6 +289,8 @@ Uint8List patchRawXlsxStyles(
   final outputBorders = bordersElement.findElements('border').toList(growable: false);
   final templateBorders =
       templateStylesDoc.findAllElements('borders').first.findElements('border').toList(growable: false);
+  final outputNumFmts = _numFmtsOf(stylesDoc);
+  final templateNumFmts = _numFmtsOf(templateStylesDoc);
 
   final patchedSheetDocs = <String, XmlDocument>{};
 
@@ -139,7 +303,7 @@ Uint8List patchRawXlsxStyles(
 
     _patchColumns(sheetDoc, templateSheetDoc);
     _patchRowHeights(sheetDoc, templateSheetDoc);
-    _recomputeFormulaValues(sheetDoc);
+    _stripFormulaValueCache(sheetDoc);
     if (alignmentSheets.contains(name)) {
       _insertMissingMergedCells(sheetDoc);
       _patchCellStyles(
@@ -157,6 +321,9 @@ Uint8List patchRawXlsxStyles(
         templateFills: templateFills,
         templateFonts: templateFonts,
         templateBorders: templateBorders,
+        outputStylesDoc: stylesDoc,
+        outputNumFmts: outputNumFmts,
+        templateNumFmts: templateNumFmts,
       );
     }
 
@@ -167,6 +334,10 @@ Uint8List patchRawXlsxStyles(
   fillsElement.setAttribute('count', '${fillsElement.findElements('fill').length}');
   fontsElement.setAttribute('count', '${fontsElement.findElements('font').length}');
   bordersElement.setAttribute('count', '${bordersElement.findElements('border').length}');
+  final numFmtsElements = stylesDoc.findAllElements('numFmts');
+  if (numFmtsElements.isNotEmpty) {
+    numFmtsElements.first.setAttribute('count', '${numFmtsElements.first.findElements('numFmt').length}');
+  }
 
   final newArchive = Archive();
   for (final file in archive.files) {
@@ -308,17 +479,17 @@ XmlElement? _definitionAt(List<XmlElement> definitions, String? idAttr) {
 /// - alignment (`horizontal`/`vertical`) -- the package's parser never
 ///   reads these at all (see module doc), so this is unconditional whenever
 ///   the template specifies either.
-/// - fill/font/border -- these normally decode and heal correctly, *except*
-///   for the small, fixed set of cells the package's own `_styleChanges`
-///   global-flag/index-0-fallback defect corrupts on encode (documented in
-///   full_style_parity_test.dart) -- compared here by the definition's
-///   actual content (not by index, which isn't comparable across
-///   documents), so this repairs that defect's effect too, for any cell,
-///   without needing to know in advance which ones it hits.
+/// - fill/font/border/number_format -- these normally decode and heal
+///   correctly, *except* for the small, fixed set of cells the package's
+///   own `_styleChanges` global-flag/index-0-fallback defect corrupts on
+///   encode (documented in full_style_parity_test.dart) -- compared here by
+///   the definition's actual content (not by index, which isn't comparable
+///   across documents), so this repairs that defect's effect too, for any
+///   cell, without needing to know in advance which ones it hits.
 ///
 /// Every fix (if any) for a cell is folded into a single cloned `<xf>` --
 /// cloning from the cell's *current* entry preserves whichever of these
-/// four properties didn't need fixing, and the clone is cached per unique
+/// five properties didn't need fixing, and the clone is cached per unique
 /// combination of current entry + fixes so cells needing the identical
 /// repair (e.g. a whole header row) share one new index instead of each
 /// minting their own.
@@ -337,6 +508,9 @@ void _patchCellStyles({
   required List<XmlElement> templateFills,
   required List<XmlElement> templateFonts,
   required List<XmlElement> templateBorders,
+  required XmlDocument outputStylesDoc,
+  required Map<int, String> outputNumFmts,
+  required Map<int, String> templateNumFmts,
 }) {
   final templateCellStyles = _cellStyleIndices(templateSheetDoc);
   final xfCache = <String, int>{};
@@ -374,13 +548,18 @@ void _patchCellStyles({
     final currentBorder = _definitionAt(outputBorders, currentXf.getAttribute('borderId'));
     final needsBorder = desiredBorder != null && desiredBorder.toXmlString() != (currentBorder?.toXmlString() ?? '');
 
-    if (!needsAlign && !needsFill && !needsFont && !needsBorder) continue;
+    final desiredNumFmt = _numFmtCodeOf(templateXf, templateNumFmts);
+    final currentNumFmt = _numFmtCodeOf(currentXf, outputNumFmts);
+    final needsNumFmt = desiredNumFmt != null && desiredNumFmt != currentNumFmt;
+
+    if (!needsAlign && !needsFill && !needsFont && !needsBorder && !needsNumFmt) continue;
 
     final key = '$currentIdx|'
         '${needsAlign ? '${desiredAlign.horizontal}|${desiredAlign.vertical}|${desiredAlign.wrap}' : 'noalign'}|'
         '${needsFill ? desiredFill.toXmlString() : 'nofill'}|'
         '${needsFont ? desiredFont.toXmlString() : 'nofont'}|'
-        '${needsBorder ? desiredBorder.toXmlString() : 'noborder'}';
+        '${needsBorder ? desiredBorder.toXmlString() : 'noborder'}|'
+        '${needsNumFmt ? desiredNumFmt : 'nonumfmt'}';
     var newIdx = xfCache[key];
     if (newIdx == null) {
       final clone = currentXf.copy();
@@ -415,6 +594,11 @@ void _patchCellStyles({
         final idx = _ensureRegistryEntry(bordersElement, 'border', outputBorders, desiredBorder, borderCache);
         clone.setAttribute('borderId', '$idx');
         clone.setAttribute('applyBorder', '1');
+      }
+      if (needsNumFmt) {
+        final idx = _ensureNumFmtId(outputStylesDoc, outputNumFmts, desiredNumFmt);
+        clone.setAttribute('numFmtId', '$idx');
+        clone.setAttribute('applyNumberFormat', '1');
       }
       cellXfsElement.children.add(clone);
       newIdx = cellXfsElement.findElements('xf').length - 1;
@@ -513,96 +697,24 @@ void _patchRowHeights(XmlDocument outputSheetDoc, XmlDocument templateSheetDoc) 
   }
 }
 
-/// Recomputes and re-caches every formula cell's `<v>` value. The `excel`
-/// package (v4.0.6) never evaluates formulas -- it round-trips "no computed
-/// value" as a *present but empty* `<v></v>` rather than a real number,
-/// confirmed present even in the pristine, never-touched template. An
-/// unconditionally-empty cache made a real user's Excel never recalculate
-/// on open (manual F9 required) despite `<calcPr fullCalcOnLoad="1">` (see
-/// [_ensureFullCalcOnLoad]) already being set -- fixed by always stripping
-/// any existing `<v>` first, below. But an absent cache also means Excel's
-/// Protected View (which never runs the calculation engine while active)
-/// renders formula cells as blank until "Enable Editing" -- confirmed on a
-/// real device file. Actually evaluating the formula here and writing the
-/// real result back closes that gap: any non-recalculating viewer now sees
-/// a correct value immediately, while `fullCalcOnLoad` still guarantees a
-/// full, independent recalculation the moment real Excel *does* run its
-/// engine -- so a bug in [evaluateFormula] can only ever affect a
-/// transient read-only preview, never the number the user edits against.
-///
-/// Builds a single `ref -> <c>` map for the sheet, then resolves each
-/// formula through a memoized, cycle-guarded closure: an absent cell
-/// resolves as `0.0` (blank = 0, standard SUM/addition semantics -- matches
-/// how these ranges already tolerate not-yet-filled rows), a cell with a
-/// non-numeric `t` (shared string/bool/error) resolves as `null` (never
-/// guess at a text cell's numeric value), a cell with its own `<f>`
-/// recurses through the same closure (so e.g. every `L{r} = +K{r}+I{r}`
-/// correctly depends on `I{r}`'s own freshly-evaluated result), and a
-/// plain `<v>` is parsed directly. [evaluateFormula] never throws --
-/// failure at any point (unsupported syntax, an unresolvable operand, a
-/// circular reference) simply yields `null`, which this function treats
-/// as "leave this cell exactly as before, no cached value" -- the exact
-/// same safe fallback the pure-strip behavior already had, never worse.
-/// Results are rounded with [round2] (`lib/utils/number_input.dart`), the
-/// same helper already used everywhere else money/km is written, so a
-/// cached formula result never carries a longer float tail than the app's
-/// own values do.
-void _recomputeFormulaValues(XmlDocument sheetDoc) {
-  final cellsByRef = <String, XmlElement>{};
+/// Removes the cached `<v>` value from every formula cell (`<c>` with an
+/// `<f>` child) unconditionally. The `excel` package (v4.0.6) never
+/// evaluates formulas -- it round-trips "no computed value" as a *present
+/// but empty* `<v></v>` rather than a real number or an absent `<v>`,
+/// confirmed present even in the pristine, never-touched template. A
+/// present-but-empty `<v>` risks Excel reading it as "the cached value IS
+/// the empty string" rather than the unambiguous "no cache, please
+/// compute" an absent `<v>` signals -- exactly what a real user's Excel
+/// was observed doing: formulas never recalculated, requiring a manual F9,
+/// despite `<calcPr fullCalcOnLoad="1">` (see [_ensureFullCalcOnLoad])
+/// already being set. Removing `<v>` outright (not just when empty) is
+/// both simpler and more correct: the app never computes real values
+/// itself, so any cached value it round-trips through is unreliable by
+/// construction, whether empty or not.
+void _stripFormulaValueCache(XmlDocument sheetDoc) {
   for (final c in sheetDoc.findAllElements('c')) {
-    final ref = c.getAttribute('r');
-    if (ref != null) cellsByRef[ref] = c;
-  }
-
-  final memo = <String, double?>{};
-  final visiting = <String>{};
-
-  double? resolve(String ref) {
-    if (memo.containsKey(ref)) return memo[ref];
-    final cell = cellsByRef[ref];
-    if (cell == null) return 0.0;
-    if (visiting.contains(ref)) return null;
-    final type = cell.getAttribute('t');
-    if (type != null && type != 'n') return null;
-
-    final fElements = cell.findElements('f');
-    double? value;
-    if (fElements.isNotEmpty) {
-      visiting.add(ref);
-      try {
-        value = evaluateFormula(fElements.first.innerText, resolve);
-      } finally {
-        visiting.remove(ref);
-      }
-    } else {
-      final vElements = cell.findElements('v');
-      // A cell can exist purely because style_heal.dart gave it a style
-      // (`<c r="D8" s="28"/>`, no <v> at all) without the app ever writing
-      // a value into it -- e.g. every receipt-column cell on a row with no
-      // receipt yet. That's a blank cell, not a malformed one: it must
-      // resolve as 0.0 exactly like a cell absent from the map entirely,
-      // not null (which would incorrectly poison every SUM/addition that
-      // includes an as-yet-unfilled row -- the common case on a fresh
-      // period, not an edge case).
-      value = vElements.isEmpty ? 0.0 : double.tryParse(vElements.first.innerText);
-    }
-    memo[ref] = value;
-    return value;
-  }
-
-  for (final entry in cellsByRef.entries) {
-    final cell = entry.value;
-    if (cell.findElements('f').isEmpty) continue;
-    cell.children.removeWhere((n) => n is XmlElement && n.name.local == 'v');
-
-    double? result;
-    try {
-      result = resolve(entry.key);
-    } catch (_) {
-      result = null;
-    }
-    if (result == null || !result.isFinite) continue;
-    cell.children.add(XmlElement(XmlName('v'), [], [XmlText('${round2(result)}')]));
+    if (c.findElements('f').isEmpty) continue;
+    c.children.removeWhere((n) => n is XmlElement && n.name.local == 'v');
   }
 }
 

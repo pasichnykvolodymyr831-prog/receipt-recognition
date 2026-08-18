@@ -39,6 +39,7 @@ const Map<String, Map<String, String>> _strings = {
   'home.errorPrefix': {'en': 'Error:', 'ru': 'Ошибка:'},
 
   'addPeriod.titleEdit': {'en': 'Edit period', 'ru': 'Изменить период'},
+  'addPeriod.saveError': {'en': 'Could not save: {error}', 'ru': 'Не удалось сохранить: {error}'},
   'addPeriod.titleAdd': {'en': 'Add period', 'ru': 'Добавить период'},
   'addPeriod.blockingBanner': {
     'en': "Today's date is past the last known payroll period. Add the next period to continue.",
@@ -175,6 +176,7 @@ const Map<String, Map<String, String>> _strings = {
   'settings.retentionSixMonths': {'en': 'Keep last 6 months', 'ru': 'Хранить 6 месяцев'},
   'settings.retentionOneYear': {'en': 'Keep last year', 'ru': 'Хранить последний год'},
   'settings.saved': {'en': 'Settings saved', 'ru': 'Настройки сохранены'},
+  'settings.saveError': {'en': 'Could not save: {error}', 'ru': 'Не удалось сохранить: {error}'},
   'settings.addNextPeriod': {'en': 'Add next payroll period', 'ru': 'Добавить следующий период'},
 
   'shareSave.title': {'en': 'Share / Save', 'ru': 'Поделиться / Сохранить'},

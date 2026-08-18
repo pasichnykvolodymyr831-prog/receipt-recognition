@@ -82,9 +82,9 @@ class PeriodRepository {
   }
 
   /// Suggests start/end for the next period, continuing the "9-23" /
-  /// "24-end of month" pattern the existing seed follows. Purely a
-  /// pre-fill convenience for the add-period form; both fields stay
-  /// editable (section 5).
+  /// "24-8th of next month" pattern the existing seed follows (e.g.
+  /// 2026-07-24 to 2026-08-08). Purely a pre-fill convenience for the
+  /// add-period form; both fields stay editable (section 5).
   (DateTime, DateTime) suggestNextPeriodRange(List<PayrollPeriod> periods) {
     if (periods.isEmpty) {
       final now = DateTime.now();
@@ -97,8 +97,10 @@ class PeriodRepository {
     if (nextStart.day <= 9) {
       nextEnd = DateTime(nextStart.year, nextStart.month, 23);
     } else {
-      final lastDay = _daysInMonth(nextStart.year, nextStart.month);
-      nextEnd = DateTime(nextStart.year, nextStart.month, lastDay);
+      // A period starting on/after the 24th always ends on the 8th of the
+      // following month (not the end of its own month) -- DateTime
+      // normalizes month=13 into January of next year automatically.
+      nextEnd = DateTime(nextStart.year, nextStart.month + 1, 8);
     }
     return (nextStart, nextEnd);
   }

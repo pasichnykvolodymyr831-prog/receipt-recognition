@@ -166,13 +166,13 @@ void main() {
             'as a Load error and repairs the file, discarding styles.xml');
   });
 
-  group('formula cache recomputation (section: formulas blank in Protected View)', () {
+  group('formula cache stripping (section: formulas never showing a computed value)', () {
     const workbookNoCalcPr = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
         'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
         '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>';
 
-    test('computes and caches a real value for a resolvable formula, discarding any stale cache', () {
+    test('removes an empty <v> cached value from a formula cell', () {
       const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
           '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
           '<sheetData><row r="1"><c r="A1" s="0"><f>1+1</f><v></v></c></row></sheetData></worksheet>';
@@ -182,66 +182,21 @@ void main() {
       final cell = _sheetOf(patched).findAllElements('c').first;
       final childNames = cell.children.whereType<XmlElement>().map((e) => e.name.local).toList();
 
-      expect(childNames, ['f', 'v'], reason: 'f-then-v matches CT_Cell\'s required child sequence');
-      expect(cell.findElements('v').first.innerText, '2.0');
+      expect(childNames, contains('f'));
+      expect(childNames, isNot(contains('v')), reason: 'a present-but-empty <v> risks Excel reading it as a real '
+          'cached value instead of "no cache, please compute"');
     });
 
-    test('sums real numeric operand cells for a SUM(range) formula', () {
+    test('does not add a <v> to a formula cell that has none', () {
       const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
           '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-          '<sheetData>'
-          '<row r="8"><c r="C8" s="0"><v>200</v></c></row>'
-          '<row r="9"><c r="C9" s="0"><v>100</v></c></row>'
-          '<row r="28"><c r="C28" s="0"><f>SUM(C8:C27)</f></c></row>'
-          '</sheetData></worksheet>';
+          '<sheetData><row r="1"><c r="A1" s="0"><f>1+1</f></c></row></sheetData></worksheet>';
       final bytes = _buildXlsxWithWorkbook(workbookNoCalcPr, sheet);
 
       final patched = patchRawXlsxStyles(bytes, bytes, allSheets: const ['Sheet1'], alignmentSheets: const []);
-      final c28 = _sheetOf(patched)
-          .findAllElements('c')
-          .firstWhere((c) => c.getAttribute('r') == 'C28');
+      final cell = _sheetOf(patched).findAllElements('c').first;
 
-      expect(c28.findElements('v').first.innerText, '300.0',
-          reason: 'blank rows within the range (C10:C27, never written) must count as 0, matching real SUM semantics');
-    });
-
-    test('a cell present with a style but no <v> at all resolves as 0.0, not as unresolvable', () {
-      // The real-world case this guards: style_heal.dart gives every cell
-      // in the operand columns a style (`<c r="D8" s="28"/>`, no <v>) even
-      // on a freshly-created period with zero receipts entered yet -- that
-      // must count as blank/0 in a SUM/addition, not poison the whole
-      // formula to "unresolvable" the way a genuinely missing operand
-      // (caught by a separate test) correctly does.
-      const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-          '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-          '<sheetData><row r="8">'
-          '<c r="C8" s="28"/><c r="D8" s="28"><v>45.99</v></c><c r="E8" s="28"/>'
-          '<c r="F8" s="28"/><c r="G8" s="28"/><c r="H8" s="28"/>'
-          '<c r="I8" s="29"><f>+H8+G8+F8+E8+D8+C8</f></c>'
-          '</row></sheetData></worksheet>';
-      final bytes = _buildXlsxWithWorkbook(workbookNoCalcPr, sheet);
-
-      final patched = patchRawXlsxStyles(bytes, bytes, allSheets: const ['Sheet1'], alignmentSheets: const []);
-      final i8 = _sheetOf(patched).findAllElements('c').firstWhere((c) => c.getAttribute('r') == 'I8');
-
-      expect(i8.findElements('v'), isNotEmpty, reason: 'style-only blank operand cells must not block computation');
-      expect(i8.findElements('v').first.innerText, '45.99');
-    });
-
-    test('a formula referencing a non-numeric (shared-string) cell is left without a cached value', () {
-      const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-          '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-          '<sheetData><row r="6"><c r="C6" s="0" t="s"><v>0</v></c></row>'
-          '<row r="28"><c r="C28" s="0"><f>SUM(C6:C6)</f></c></row></sheetData></worksheet>';
-      final bytes = _buildXlsxWithWorkbook(workbookNoCalcPr, sheet);
-
-      final patched = patchRawXlsxStyles(bytes, bytes, allSheets: const ['Sheet1'], alignmentSheets: const []);
-      final c28 = _sheetOf(patched)
-          .findAllElements('c')
-          .firstWhere((c) => c.getAttribute('r') == 'C28');
-
-      expect(c28.children.whereType<XmlElement>().map((e) => e.name.local), ['f'],
-          reason: 'never guess a text cell\'s numeric value -- graceful skip, same as before this pass existed');
+      expect(cell.children.whereType<XmlElement>().map((e) => e.name.local), ['f']);
     });
 
     test('leaves a non-formula cell untouched', () {
@@ -394,6 +349,120 @@ void main() {
       final cellRefs = row.findElements('c').map((c) => c.getAttribute('r')).toList();
 
       expect(cellRefs, ['I5', 'J5'], reason: 'no duplicate <c r="J5"> should be inserted when one already exists');
+    });
+  });
+
+  group('numFmt canonicalization + comparison (section: number-format table bloat, Пакет 16)', () {
+    const workbookNoCalcPr = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>';
+
+    test('collapses a materialized custom numFmt equivalent to a built-in code back onto the built-in id', () {
+      // Simulates what the `excel` package does on re-encode: built-in id
+      // 15 ("d-mmm-yy") gets "materialized" into a custom id 164 with an
+      // escaped-but-equivalent code, and the cellXf that used to reference
+      // 15 now references 164 instead.
+      const styles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+          '<numFmts count="1"><numFmt numFmtId="164" formatCode="d\\-mmm\\-yy"/></numFmts>'
+          '$_minimalFontsFillsBorders'
+          '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+          '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>'
+          '<xf numFmtId="164" fontId="0" fillId="0" borderId="0"/></cellXfs>'
+          '</styleSheet>';
+      final bytes = _buildXlsxWithWorkbookAndStyles(workbookNoCalcPr, _minimalSheet, styles);
+
+      final patched = patchRawXlsxStyles(bytes, bytes, allSheets: const ['Sheet1'], alignmentSheets: const []);
+      final patchedStyles = _stylesOf(patched);
+      final cellXfs = patchedStyles.findAllElements('cellXfs').first.findElements('xf').toList();
+
+      expect(cellXfs[1].getAttribute('numFmtId'), '15',
+          reason: 'the materialized custom id must collapse back onto the built-in id it duplicates');
+      expect(patchedStyles.findAllElements('numFmt'), isEmpty,
+          reason: 'the now-unreferenced custom numFmt entry must be removed, not just orphaned');
+    });
+
+    test('repeated canonicalize-then-rematerialize cycles never grow the numFmts table', () {
+      // Simulates several decode/re-encode cycles: each cycle, canonicalize
+      // first (as patchRawXlsxStyles now always does), then re-materialize
+      // as the `excel` package would on its own next encode. The table must
+      // stay at exactly one entry, not accumulate a fresh one per cycle.
+      const styles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+          '<numFmts count="1"><numFmt numFmtId="164" formatCode="d\\-mmm\\-yy"/></numFmts>'
+          '$_minimalFontsFillsBorders'
+          '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+          '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>'
+          '<xf numFmtId="164" fontId="0" fillId="0" borderId="0"/></cellXfs>'
+          '</styleSheet>';
+      var bytes = _buildXlsxWithWorkbookAndStyles(workbookNoCalcPr, _minimalSheet, styles);
+
+      for (var cycle = 0; cycle < 4; cycle++) {
+        final patched = patchRawXlsxStyles(bytes, bytes, allSheets: const ['Sheet1'], alignmentSheets: const []);
+        final patchedStyles = _stylesOf(patched);
+        expect(patchedStyles.findAllElements('numFmt'), isEmpty, reason: 'cycle $cycle: table should stay collapsed');
+
+        // Re-materialize built-in id 15 back into a fresh custom id, as the
+        // `excel` package's own .encode() would do on its next pass.
+        final rematerialized = XmlDocument.parse(patchedStyles.toXmlString());
+        final cellXfsEl = rematerialized.findAllElements('cellXfs').first;
+        final xf1 = cellXfsEl.findElements('xf').elementAt(1);
+        xf1.setAttribute('numFmtId', '200');
+        final fontsEl = rematerialized.findAllElements('fonts').first;
+        fontsEl.parent!.children.insert(
+          fontsEl.parent!.children.indexOf(fontsEl),
+          XmlElement(XmlName('numFmts'), [XmlAttribute(XmlName('count'), '1')], [
+            XmlElement(XmlName('numFmt'),
+                [XmlAttribute(XmlName('numFmtId'), '200'), XmlAttribute(XmlName('formatCode'), 'd\\-mmm\\-yy')], []),
+          ]),
+        );
+
+        final archive = ZipDecoder().decodeBytes(bytes);
+        final newArchive = Archive();
+        for (final file in archive.files) {
+          if (file.name == 'xl/styles.xml') {
+            final content = utf8.encode(rematerialized.toXmlString());
+            newArchive.addFile(ArchiveFile(file.name, content.length, content));
+          } else {
+            newArchive.addFile(file);
+          }
+        }
+        bytes = Uint8List.fromList(ZipEncoder().encode(newArchive)!);
+      }
+    });
+
+    test('_patchCellStyles also repairs a number_format mismatch on an aligned sheet, same as font/border', () {
+      const templateStyles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+          '$_minimalFontsFillsBorders'
+          '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+          '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>'
+          '<xf numFmtId="2" fontId="0" fillId="0" borderId="0"/></cellXfs>'
+          '</styleSheet>';
+      const encodedStyles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+          '$_minimalFontsFillsBorders'
+          '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+          '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>'
+          '<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>'
+          '</styleSheet>';
+      const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+          '<sheetData><row r="1"><c r="A1" s="1"><v>12.5</v></c></row></sheetData></worksheet>';
+
+      final templateBytes = _buildXlsxWithWorkbookAndStyles(workbookNoCalcPr, sheet, templateStyles);
+      final encodedBytes = _buildXlsxWithWorkbookAndStyles(workbookNoCalcPr, sheet, encodedStyles);
+
+      final patched =
+          patchRawXlsxStyles(encodedBytes, templateBytes, allSheets: const ['Sheet1'], alignmentSheets: const ['Sheet1']);
+      final cell = _sheetOf(patched).findAllElements('c').first;
+      final styles = _stylesOf(patched);
+      final cellXfs = styles.findAllElements('cellXfs').first.findElements('xf').toList();
+      final newIdx = int.parse(cell.getAttribute('s')!);
+
+      expect(cellXfs[newIdx].getAttribute('numFmtId'), '2',
+          reason: 'template expects numFmtId 2 ("0.00") but the output cell had General -- must be repaired');
     });
   });
 }

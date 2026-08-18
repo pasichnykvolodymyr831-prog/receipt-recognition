@@ -70,8 +70,16 @@ List<String> _allCellStyleMismatches(Excel actual, Excel template, List<String> 
           continue;
         }
         final reasons = <String>[];
-        if (templateStyle.numberFormat.accepts(sheet.cell(idx).value) &&
-            style.numberFormat.formatCode != templateStyle.numberFormat.formatCode) {
+        // A mismatch is only excused when the cell holds a real value the
+        // template's format genuinely can't represent (Timesheet's
+        // text-in-a-time-cell case, see the test below) -- a blank cell is
+        // never exempt, since `NumFormat.accepts(null)` is always `true`
+        // for every subclass in the `excel` package, otherwise this check
+        // silently stops meaning anything for any cell the write sequence
+        // never populates (audit 2026-08-18, Пакет 16).
+        final cellValue = sheet.cell(idx).value;
+        final formatExempt = cellValue != null && !templateStyle.numberFormat.accepts(cellValue);
+        if (!formatExempt && style.numberFormat.formatCode != templateStyle.numberFormat.formatCode) {
           reasons.add('number_format');
         }
         if (style.fontFamily != templateStyle.fontFamily || style.fontSize != templateStyle.fontSize) {
