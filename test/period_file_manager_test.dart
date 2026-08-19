@@ -6,6 +6,7 @@
 // mirrors backup_manager_test.dart's split for the same reason.
 import 'dart:io';
 
+import 'package:excel/excel.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
@@ -13,6 +14,7 @@ import 'package:expenseflow/models/payroll_period.dart';
 import 'package:expenseflow/services/backup_manager.dart';
 import 'package:expenseflow/services/period_file_manager.dart';
 import 'package:expenseflow/services/settings_repository.dart';
+import 'package:expenseflow/xlsx/xlsx_rels_compat.dart';
 
 class _FakePathProviderPlatform extends PathProviderPlatform {
   _FakePathProviderPlatform(this._docsPath);
@@ -183,6 +185,47 @@ void main() {
       final reportsDir = Directory('${docsDir.path}/reports');
       final entries = reportsDir.listSync().map((e) => e.uri.pathSegments.last).toList();
       expect(entries, unorderedEquals(['Truman_MileageReport_2026-08-09_2026-08-23.xlsx', 'Truman_Timesheet_2026-08-09_2026-08-23.xlsx']));
+    });
+  });
+
+  group('writeRateIfFileExists (Пакет 31: shared rate-change file-write step)', () {
+    late Directory docsDir;
+
+    setUp(() {
+      docsDir = Directory.systemTemp.createTempSync('period_file_manager_rate_docs');
+      PathProviderPlatform.instance = _FakePathProviderPlatform(docsDir.path);
+    });
+
+    tearDown(() {
+      docsDir.deleteSync(recursive: true);
+    });
+
+    final period = PayrollPeriod(
+      key: '2026-08-09_2026-08-23',
+      start: DateTime(2026, 8, 9),
+      end: DateTime(2026, 8, 23),
+      due: DateTime(2026, 8, 21, 16, 30),
+      weekendAltDue: DateTime(2026, 8, 23, 8, 30),
+      statHolidays: const [],
+    );
+
+    test('writes the new rate to G1 when the file already exists', () async {
+      await PeriodFileManager().ensureFilesExist(period, AppSettings.defaults.copyWith(kmRate: 0.56));
+
+      await PeriodFileManager().writeRateIfFileExists(period, 0.60);
+
+      final file = await PeriodFileManager().mileageReportFile(period);
+      final excel = Excel.decodeBytes(normalizeXlsxRelationshipTargets(await file.readAsBytes()));
+      final g1 = excel.sheets['Driving Details']!.cell(CellIndex.indexByString('G1')).value;
+      expect((g1 as DoubleCellValue).value, closeTo(0.60, 1e-9));
+    });
+
+    test('is a no-op when the file does not exist yet (period not created)', () async {
+      // No ensureFilesExist call -- the file genuinely does not exist.
+      await PeriodFileManager().writeRateIfFileExists(period, 0.60);
+
+      final file = await PeriodFileManager().mileageReportFile(period);
+      expect(await file.exists(), false, reason: 'must not create the file as a side effect');
     });
   });
 

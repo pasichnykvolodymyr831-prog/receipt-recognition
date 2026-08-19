@@ -4,6 +4,7 @@ import '../l10n/app_strings.dart';
 import '../models/payroll_period.dart';
 import '../services/period_file_manager.dart';
 import '../services/safe_xlsx_write.dart';
+import '../utils/time_format.dart';
 import '../xlsx/timesheet_engine.dart';
 
 /// Timesheet day list + per-day edit (section 10). Shows the auto-filled
@@ -65,7 +66,7 @@ class _TimesheetScreenState extends State<TimesheetScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(t(context, 'drivingDetails.saveError', {'error': '$e'}))));
+            .showSnackBar(SnackBar(content: Text(t(context, 'timesheet.saveError', {'error': '$e'}))));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -104,8 +105,7 @@ class _TimesheetScreenState extends State<TimesheetScreen> {
                     final hours = summary.hoursByRow[index];
                     final isWeekend = date.weekday == DateTime.saturday || date.weekday == DateTime.sunday;
                     final isStat = widget.period.isStatHoliday(date);
-                    final dateFmt =
-                        '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+                    final dateFmt = formatDate(date);
 
                     return ListTile(
                       title: Text(dateFmt),
@@ -206,6 +206,7 @@ class _EditDayScreenState extends State<_EditDayScreen> {
 
   Future<void> _pick(TimeOfDay initial, void Function(TimeOfDay) onPicked) async {
     final picked = await showTimePicker(context: context, initialTime: initial);
+    if (!mounted) return;
     if (picked != null) {
       setState(() {
         onPicked(picked);
@@ -250,8 +251,7 @@ class _EditDayScreenState extends State<_EditDayScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final dateFmt =
-        '${widget.date.year}-${widget.date.month.toString().padLeft(2, '0')}-${widget.date.day.toString().padLeft(2, '0')}';
+    final dateFmt = formatDate(widget.date);
 
     return Scaffold(
       appBar: AppBar(title: Text(dateFmt)),
@@ -268,6 +268,10 @@ class _EditDayScreenState extends State<_EditDayScreen> {
             subtitle: Text('${_lunchStart.format(context)} - ${_lunchEnd.format(context)}'),
             onTap: () async {
               await _pick(_lunchStart, (t) => _lunchStart = t);
+              // The mounted guard here is load-bearing, not redundant with
+              // the one inside _pick: it stops a SECOND showTimePicker call
+              // from ever starting with a stale context, not just guarding
+              // the setState after it returns.
               if (mounted) await _pick(_lunchEnd, (t) => _lunchEnd = t);
             },
           ),

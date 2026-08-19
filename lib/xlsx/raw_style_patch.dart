@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 
+import 'mileage_report_engine.dart';
+
 /// Repairs seven `excel`-package (v4.0.6) defects that its own object model
 /// can never detect or fix, by working directly on the encoded xlsx bytes'
 /// raw XML -- the same "bypass the package" approach [xlsx_raw_inspect.dart]
@@ -102,6 +104,16 @@ import 'package:xml/xml.dart';
 /// same sheets style_heal.dart heals on this write, since properties 1-2
 /// above share the same root cause (a cell's `<xf>` no longer being the
 /// template's original entry).
+///
+/// Naming scheme for this file's per-sheet fix functions (Пакет 37, audit
+/// 2026-08-18, written down so the next one picks a verb on purpose): a
+/// `_patchX` function restores X from the template only when it actually
+/// differs (a real repair, conditional); a `_clearX`/`_stripX` function
+/// unconditionally removes X regardless of what's currently there (a
+/// policy, not a repair -- used when the *correct* state is "absent",
+/// like formula caches or the row-height override, not "matches the
+/// template"); `_insertX`/`_ensureX` create something that may be
+/// entirely missing rather than merely wrong.
 /// ECMA-376 (§18.8.30) built-in number format codes -- ids below 164 are
 /// implied by the standard and never listed explicitly in a workbook's own
 /// `<numFmts>`; ids 164+ are always document-local custom entries.
@@ -312,9 +324,11 @@ Uint8List patchRawXlsxStyles(
     _patchColumns(sheetDoc, templateSheetDoc);
     _patchRowHeights(sheetDoc, templateSheetDoc);
     if (name == 'Truman Homes') {
-      _clearManagedRowHeightOverride(sheetDoc, firstRow: 8, lastRow: 27);
+      _clearManagedRowHeightOverride(sheetDoc,
+          firstRow: MileageReportEngine.firstDataRow, lastRow: MileageReportEngine.lastDataRow);
     } else if (name == 'Driving Details') {
-      _clearManagedRowHeightOverride(sheetDoc, firstRow: 2, lastRow: 18);
+      _clearManagedRowHeightOverride(sheetDoc,
+          firstRow: MileageReportEngine.firstDrivingRow, lastRow: MileageReportEngine.lastDrivingRow);
     }
     _stripFormulaValueCache(sheetDoc);
     if (alignmentSheets.contains(name)) {
@@ -343,6 +357,36 @@ Uint8List patchRawXlsxStyles(
     patchedSheetDocs[sheetFile] = sheetDoc;
   }
 
+  return _writePatchedArchive(
+    archive: archive,
+    stylesDoc: stylesDoc,
+    workbookDoc: workbookDoc,
+    patchedSheetDocs: patchedSheetDocs,
+    cellXfsElement: cellXfsElement,
+    fillsElement: fillsElement,
+    fontsElement: fontsElement,
+    bordersElement: bordersElement,
+  );
+}
+
+/// The tail of [patchRawXlsxStyles]: stamps final `count` attributes onto
+/// each shared style-table element (now that every sheet has had its
+/// chance to add entries to them) and re-serializes the whole zip archive,
+/// swapping in the patched XML documents for the parts that changed and
+/// copying every other archive entry through byte-for-byte untouched.
+/// Split out from the main per-sheet-dispatch function as a distinct step
+/// (Пакет 36, audit 2026-08-18) -- pure "finalize and write," no per-sheet
+/// patching logic of its own.
+Uint8List _writePatchedArchive({
+  required Archive archive,
+  required XmlDocument stylesDoc,
+  required XmlDocument workbookDoc,
+  required Map<String, XmlDocument> patchedSheetDocs,
+  required XmlElement cellXfsElement,
+  required XmlElement fillsElement,
+  required XmlElement fontsElement,
+  required XmlElement bordersElement,
+}) {
   cellXfsElement.setAttribute('count', '${cellXfsElement.findElements('xf').length}');
   fillsElement.setAttribute('count', '${fillsElement.findElements('fill').length}');
   fontsElement.setAttribute('count', '${fontsElement.findElements('font').length}');
@@ -409,6 +453,9 @@ Map<String, String> _sheetFileMap(Archive archive) {
   return result;
 }
 
+/// The alignment properties one `<xf>`'s `<alignment>` child can carry --
+/// only the ones defect #1 (see module doc) cares about, not the full
+/// OOXML alignment attribute set.
 class _Align {
   final String? horizontal;
   final String? vertical;
@@ -485,6 +532,26 @@ XmlElement? _definitionAt(List<XmlElement> definitions, String? idAttr) {
   return id < definitions.length ? definitions[id] : null;
 }
 
+/// Whether a cell's fill/font/border needs to change to match the
+/// template's, and the definition to change it to if so -- the exact same
+/// "resolve both sides via [_definitionAt], compare by content" shape
+/// [_patchCellStyles] previously repeated three times inline, once per
+/// property (Пакет 36, audit 2026-08-18). Pure and independently testable;
+/// [_patchCellStyles] itself still owns folding the result into a cloned
+/// `<xf>` and caching it, since that part isn't identical across
+/// properties (alignment/numFmt need different merge logic entirely).
+(XmlElement? desired, bool needsChange) _needsDefinitionChange({
+  required List<XmlElement> templateDefs,
+  required String? templateIdAttr,
+  required List<XmlElement> outputDefs,
+  required String? currentIdAttr,
+}) {
+  final desired = _definitionAt(templateDefs, templateIdAttr);
+  final current = _definitionAt(outputDefs, currentIdAttr);
+  final needsChange = desired != null && desired.toXmlString() != (current?.toXmlString() ?? '');
+  return (desired, needsChange);
+}
+
 /// Fixes, per cell, everything a cell's `<xf>` can carry that the `excel`
 /// package (v4.0.6) can silently corrupt on re-encode and that
 /// style_heal.dart's `CellStyle`-level healing can never detect or repair:
@@ -549,17 +616,26 @@ void _patchCellStyles({
     final needsAlign =
         (desiredAlign.horizontal != null || desiredAlign.vertical != null) && _alignmentOf(currentXf) != desiredAlign;
 
-    final desiredFill = _definitionAt(templateFills, templateXf.getAttribute('fillId'));
-    final currentFill = _definitionAt(outputFills, currentXf.getAttribute('fillId'));
-    final needsFill = desiredFill != null && desiredFill.toXmlString() != (currentFill?.toXmlString() ?? '');
+    final (desiredFill, needsFill) = _needsDefinitionChange(
+      templateDefs: templateFills,
+      templateIdAttr: templateXf.getAttribute('fillId'),
+      outputDefs: outputFills,
+      currentIdAttr: currentXf.getAttribute('fillId'),
+    );
 
-    final desiredFont = _definitionAt(templateFonts, templateXf.getAttribute('fontId'));
-    final currentFont = _definitionAt(outputFonts, currentXf.getAttribute('fontId'));
-    final needsFont = desiredFont != null && desiredFont.toXmlString() != (currentFont?.toXmlString() ?? '');
+    final (desiredFont, needsFont) = _needsDefinitionChange(
+      templateDefs: templateFonts,
+      templateIdAttr: templateXf.getAttribute('fontId'),
+      outputDefs: outputFonts,
+      currentIdAttr: currentXf.getAttribute('fontId'),
+    );
 
-    final desiredBorder = _definitionAt(templateBorders, templateXf.getAttribute('borderId'));
-    final currentBorder = _definitionAt(outputBorders, currentXf.getAttribute('borderId'));
-    final needsBorder = desiredBorder != null && desiredBorder.toXmlString() != (currentBorder?.toXmlString() ?? '');
+    final (desiredBorder, needsBorder) = _needsDefinitionChange(
+      templateDefs: templateBorders,
+      templateIdAttr: templateXf.getAttribute('borderId'),
+      outputDefs: outputBorders,
+      currentIdAttr: currentXf.getAttribute('borderId'),
+    );
 
     final desiredNumFmt = _numFmtCodeOf(templateXf, templateNumFmts);
     final currentNumFmt = _numFmtCodeOf(currentXf, outputNumFmts);
@@ -567,11 +643,15 @@ void _patchCellStyles({
 
     if (!needsAlign && !needsFill && !needsFont && !needsBorder && !needsNumFmt) continue;
 
+    // The `!`s below are safe by _needsDefinitionChange's own contract:
+    // needsX is only ever true when desiredX is non-null (same invariant
+    // the pre-Пакет-36 inline code relied on, just no longer visible to
+    // the analyzer's promotion across the destructured record pattern).
     final key = '$currentIdx|'
         '${needsAlign ? '${desiredAlign.horizontal}|${desiredAlign.vertical}|${desiredAlign.wrap}' : 'noalign'}|'
-        '${needsFill ? desiredFill.toXmlString() : 'nofill'}|'
-        '${needsFont ? desiredFont.toXmlString() : 'nofont'}|'
-        '${needsBorder ? desiredBorder.toXmlString() : 'noborder'}|'
+        '${needsFill ? desiredFill!.toXmlString() : 'nofill'}|'
+        '${needsFont ? desiredFont!.toXmlString() : 'nofont'}|'
+        '${needsBorder ? desiredBorder!.toXmlString() : 'noborder'}|'
         '${needsNumFmt ? desiredNumFmt : 'nonumfmt'}';
     var newIdx = xfCache[key];
     if (newIdx == null) {
@@ -594,17 +674,17 @@ void _patchCellStyles({
         clone.setAttribute('applyAlignment', '1');
       }
       if (needsFill) {
-        final idx = _ensureRegistryEntry(fillsElement, 'fill', outputFills, desiredFill, fillCache);
+        final idx = _ensureRegistryEntry(fillsElement, 'fill', outputFills, desiredFill!, fillCache);
         clone.setAttribute('fillId', '$idx');
         clone.setAttribute('applyFill', '1');
       }
       if (needsFont) {
-        final idx = _ensureRegistryEntry(fontsElement, 'font', outputFonts, desiredFont, fontCache);
+        final idx = _ensureRegistryEntry(fontsElement, 'font', outputFonts, desiredFont!, fontCache);
         clone.setAttribute('fontId', '$idx');
         clone.setAttribute('applyFont', '1');
       }
       if (needsBorder) {
-        final idx = _ensureRegistryEntry(bordersElement, 'border', outputBorders, desiredBorder, borderCache);
+        final idx = _ensureRegistryEntry(bordersElement, 'border', outputBorders, desiredBorder!, borderCache);
         clone.setAttribute('borderId', '$idx');
         clone.setAttribute('applyBorder', '1');
       }
@@ -645,10 +725,10 @@ void _patchColumns(XmlDocument outputSheetDoc, XmlDocument templateSheetDoc) {
     outputCols.children.clear();
     outputCols.children.addAll(clonedChildren);
   } else {
-    final worksheet = outputSheetDoc.rootElement;
+    final rootElement = outputSheetDoc.rootElement;
     final sheetData = outputSheetDoc.findAllElements('sheetData').first;
-    final idx = worksheet.children.indexOf(sheetData);
-    worksheet.children.insert(idx, XmlElement(XmlName('cols'), [], clonedChildren));
+    final idx = rootElement.children.indexOf(sheetData);
+    rootElement.children.insert(idx, XmlElement(XmlName('cols'), [], clonedChildren));
   }
 }
 
@@ -664,7 +744,7 @@ void _patchRowHeights(XmlDocument outputSheetDoc, XmlDocument templateSheetDoc) 
     final ht = row.getAttribute('ht');
     final customHeight = row.getAttribute('customHeight');
     if (ht == null || (customHeight != '1' && customHeight != 'true')) continue;
-    final r = int.tryParse(row.getAttribute('r') ?? '');
+    final r = _rowNumberOf(row);
     if (r == null) continue;
     templateRows[r] = ht;
   }
@@ -673,7 +753,7 @@ void _patchRowHeights(XmlDocument outputSheetDoc, XmlDocument templateSheetDoc) 
   final sheetData = outputSheetDoc.findAllElements('sheetData').first;
   final outputRows = <int, XmlElement>{};
   for (final row in sheetData.findElements('row')) {
-    final r = int.tryParse(row.getAttribute('r') ?? '');
+    final r = _rowNumberOf(row);
     if (r != null) outputRows[r] = row;
   }
 
@@ -689,14 +769,7 @@ void _patchRowHeights(XmlDocument outputSheetDoc, XmlDocument templateSheetDoc) 
       continue;
     }
 
-    XmlElement? insertBefore;
-    for (final row in sheetData.findElements('row')) {
-      final rr = int.tryParse(row.getAttribute('r') ?? '');
-      if (rr != null && rr > r) {
-        insertBefore = row;
-        break;
-      }
-    }
+    final insertBefore = _firstAfter(sheetData.findElements('row'), r, _rowNumberOf);
     final newRow = XmlElement(XmlName('row'), [
       XmlAttribute(XmlName('r'), '$r'),
       XmlAttribute(XmlName('ht'), desiredHt),
@@ -745,7 +818,7 @@ void _patchRowHeights(XmlDocument outputSheetDoc, XmlDocument templateSheetDoc) 
 void _clearManagedRowHeightOverride(XmlDocument outputSheetDoc, {required int firstRow, required int lastRow}) {
   final sheetData = outputSheetDoc.findAllElements('sheetData').first;
   for (final row in sheetData.findElements('row')) {
-    final r = int.tryParse(row.getAttribute('r') ?? '');
+    final r = _rowNumberOf(row);
     if (r == null || r < firstRow || r > lastRow) continue;
     row.removeAttribute('ht');
     row.removeAttribute('customHeight');
@@ -791,6 +864,9 @@ void _ensureFullCalcOnLoad(XmlDocument workbookDoc) {
   );
 }
 
+/// Spreadsheet column letters ("A", "Z", "AA", ...) to their 1-based
+/// column number, per the standard base-26 (no zero digit) letter
+/// numbering OOXML cell references use.
 int _columnLettersToNum(String letters) {
   var n = 0;
   for (final ch in letters.codeUnits) {
@@ -799,6 +875,7 @@ int _columnLettersToNum(String letters) {
   return n;
 }
 
+/// The inverse of [_columnLettersToNum].
 String _numToColumnLetters(int col) {
   var n = col;
   var s = '';
@@ -810,16 +887,45 @@ String _numToColumnLetters(int col) {
   return s;
 }
 
+/// The column number of a cell reference like `"J8"`, or null if [cellRef]
+/// doesn't match the `<letters><digits>` shape.
 int? _columnOf(String cellRef) {
   final match = RegExp(r'^([A-Z]+)\d+$').firstMatch(cellRef);
   return match == null ? null : _columnLettersToNum(match.group(1)!);
 }
 
+/// The `r="N"` row number of a `<row>` element, or null if absent/
+/// unparseable. Shared by every function in this file that keys rows by
+/// number (Пакет 35, audit 2026-08-18 -- previously each repeated
+/// `int.tryParse(row.getAttribute('r') ?? '')` independently).
+int? _rowNumberOf(XmlElement row) => int.tryParse(row.getAttribute('r') ?? '');
+
+/// Finds the first element of [siblings] whose [keyOf] value is greater
+/// than [target] -- the correct existing sibling to `insert` a new element
+/// before, to keep row/column order within an XML parent (`<sheetData>`'s
+/// `<row>` children, or a `<row>`'s own `<c>` children). Elements whose key
+/// doesn't parse are skipped, never treated as "greater". `null` means
+/// "nothing found greater than target" -- the caller should `add` (append)
+/// instead of `insert`. Shared by every "keep this new element in sorted
+/// position" case in this file (Пакет 35, audit 2026-08-18 -- three
+/// near-identical scan loops previously).
+XmlElement? _firstAfter(Iterable<XmlElement> siblings, int target, int? Function(XmlElement) keyOf) {
+  for (final el in siblings) {
+    final key = keyOf(el);
+    if (key != null && key > target) return el;
+  }
+  return null;
+}
+
+/// A `<mergeCell ref="I8:J8">`-style range, in column/row numbers rather
+/// than letters, so it can be iterated with plain integer loops.
 class _CellRange {
   final int colStart, rowStart, colEnd, rowEnd;
   const _CellRange(this.colStart, this.rowStart, this.colEnd, this.rowEnd);
 }
 
+/// Parses a `"I8:J8"`-style merge range into a [_CellRange], or null if
+/// [ref] doesn't match that exact `<col><row>:<col><row>` shape.
 _CellRange? _parseCellRange(String ref) {
   final match = RegExp(r'^([A-Z]+)(\d+):([A-Z]+)(\d+)$').firstMatch(ref);
   if (match == null) return null;
@@ -865,7 +971,7 @@ void _insertMissingMergedCells(XmlDocument outputSheetDoc) {
   final sheetData = outputSheetDoc.findAllElements('sheetData').first;
   final existingRows = <int, XmlElement>{};
   for (final row in sheetData.findElements('row')) {
-    final r = int.tryParse(row.getAttribute('r') ?? '');
+    final r = _rowNumberOf(row);
     if (r != null) existingRows[r] = row;
   }
 
@@ -878,14 +984,7 @@ void _insertMissingMergedCells(XmlDocument outputSheetDoc) {
     for (var r = range.rowStart; r <= range.rowEnd; r++) {
       final row = existingRows.putIfAbsent(r, () {
         final newRow = XmlElement(XmlName('row'), [XmlAttribute(XmlName('r'), '$r')], []);
-        XmlElement? insertBefore;
-        for (final existing in sheetData.findElements('row')) {
-          final rr = int.tryParse(existing.getAttribute('r') ?? '');
-          if (rr != null && rr > r) {
-            insertBefore = existing;
-            break;
-          }
-        }
+        final insertBefore = _firstAfter(sheetData.findElements('row'), r, _rowNumberOf);
         if (insertBefore != null) {
           sheetData.children.insert(sheetData.children.indexOf(insertBefore), newRow);
         } else {
@@ -900,14 +999,8 @@ void _insertMissingMergedCells(XmlDocument outputSheetDoc) {
         if (alreadyExists) continue;
 
         final newCell = XmlElement(XmlName('c'), [XmlAttribute(XmlName('r'), cellRef)], []);
-        XmlElement? insertBefore;
-        for (final existing in row.findElements('c')) {
-          final cc = _columnOf(existing.getAttribute('r') ?? '');
-          if (cc != null && cc > c) {
-            insertBefore = existing;
-            break;
-          }
-        }
+        final insertBefore =
+            _firstAfter(row.findElements('c'), c, (cell) => _columnOf(cell.getAttribute('r') ?? ''));
         if (insertBefore != null) {
           row.children.insert(row.children.indexOf(insertBefore), newCell);
         } else {

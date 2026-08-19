@@ -4,7 +4,6 @@ import '../l10n/app_strings.dart';
 import '../l10n/locale_controller.dart';
 import '../services/period_file_manager.dart';
 import '../services/period_repository.dart';
-import '../services/safe_xlsx_write.dart';
 import '../services/settings_repository.dart';
 import '../utils/number_input.dart';
 import '../xlsx/mileage_report_engine.dart';
@@ -93,10 +92,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         final periods = await periodRepo.loadAll();
         final current = periodRepo.findCurrent(periods, DateTime.now());
         if (current != null) {
-          final file = await PeriodFileManager().mileageReportFile(current);
-          if (await file.exists()) {
-            await changeMileagePeriodRate(file, newRate: newKmRate);
-          }
+          await PeriodFileManager().writeRateIfFileExists(current, newKmRate);
           await periodRepo.updatePeriod(current.copyWith(kmRate: newKmRate));
         }
         _originalKmRate = newKmRate;
@@ -105,6 +101,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) {
         AppLocale.of(context).setLanguage(_languageCode);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t(context, 'settings.saved'))));
+      }
+    } on MileageReportStructureException {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(t(context, 'mileageReport.rateChangeStructureError'))));
+      }
+    } on MileageReportRowOccupiedException {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(t(context, 'mileageReport.rateChangeRowOccupiedError'))));
       }
     } catch (e) {
       if (mounted) {

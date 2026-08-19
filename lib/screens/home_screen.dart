@@ -4,6 +4,7 @@ import '../l10n/app_strings.dart';
 import '../models/payroll_period.dart';
 import '../services/app_startup.dart';
 import '../services/period_file_manager.dart' show periodLabel;
+import '../utils/time_format.dart';
 import 'add_period_screen.dart';
 import 'period_actions.dart';
 import 'period_archive_screen.dart';
@@ -134,9 +135,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+// Deliberately its own hour12:minute AM/PM formatting rather than reusing
+// [formatClockTime] (Пакет 32, audit 2026-08-18): that helper's compact
+// "430pm" shape matches the Timesheet's Excel-cell text convention, not a
+// human-readable screen label -- forcing this label into that shape would
+// be a real readability regression, not a meaningful deduplication. Only
+// the date portion (genuinely identical everywhere) is shared.
 String _formatDateTime(DateTime d) {
   final hour12 = d.hour % 12 == 0 ? 12 : d.hour % 12;
   final period = d.hour < 12 ? 'AM' : 'PM';
   final minute = d.minute.toString().padLeft(2, '0');
-  return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')} $hour12:$minute $period';
+  return '${formatDate(d)} $hour12:$minute $period';
 }

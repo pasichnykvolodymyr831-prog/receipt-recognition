@@ -69,6 +69,27 @@ class PeriodFileManager {
     return await mileage.exists() && await timesheet.exists();
   }
 
+  /// Writes [newRate] to [period]'s Mileage Report file (`G1` + Kilometers
+  /// row Travel, via `changeMileagePeriodRate`) if that file already
+  /// exists -- a no-op otherwise, since a period whose file hasn't been
+  /// created yet will pick up the new rate on its own at creation time
+  /// (section 6.2's resolve-rate priority rule already handles that case).
+  ///
+  /// Both rate-change UI paths (Settings default change, the period form's
+  /// own rate field) share this exact step -- previously each screen
+  /// implemented it independently with near-identical code, risking the
+  /// two copies silently diverging on a future fix. The caller is still
+  /// responsible for persisting the new rate to [PeriodRepository]
+  /// **after** this returns successfully, never before (section 6.2:
+  /// "никогда только одно из двух" -- the file must never fail to update
+  /// while `period.kmRate` already claims the new value).
+  Future<void> writeRateIfFileExists(PayrollPeriod period, double newRate) async {
+    final file = await mileageReportFile(period);
+    if (await file.exists()) {
+      await changeMileagePeriodRate(file, newRate: newRate);
+    }
+  }
+
   /// Creates both files for [period] from the bundled templates if they
   /// don't already exist (section 5). No-op if they're already there.
   ///

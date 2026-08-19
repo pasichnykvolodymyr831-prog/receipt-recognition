@@ -112,7 +112,6 @@ const Map<String, Map<String, String>> _strings = {
   'addReceipt.dateRequired': {'en': 'Date is required.', 'ru': 'Укажите дату.'},
   'addReceipt.subtotalRequired': {'en': 'Subtotal is required.', 'ru': 'Укажите сумму без налога.'},
   'addReceipt.gstRequired': {'en': 'GST is required.', 'ru': 'Укажите GST.'},
-  'addReceipt.noRoomTitle': {'en': 'No room left', 'ru': 'Нет свободных строк'},
   'addReceipt.noRoomContent': {
     'en': "This period's Mileage Report is full. Please add the remaining receipts directly in Excel.",
     'ru': 'Mileage Report для этого периода заполнен. Добавьте оставшиеся чеки прямо в Excel.',
@@ -136,6 +135,7 @@ const Map<String, Map<String, String>> _strings = {
   'drivingDetails.saveError': {'en': 'Could not save: {error}', 'ru': 'Не удалось сохранить: {error}'},
 
   'timesheet.title': {'en': 'Timesheet', 'ru': 'Timesheet'},
+  'timesheet.saveError': {'en': 'Could not save: {error}', 'ru': 'Не удалось сохранить: {error}'},
   'timesheet.totalHrs': {'en': 'Total Hrs.', 'ru': 'Итого часов'},
   'timesheet.statHoliday': {'en': 'STAT holiday', 'ru': 'STAT-праздник'},
   'timesheet.weekend': {'en': 'Weekend', 'ru': 'Выходной'},
@@ -188,6 +188,30 @@ const Map<String, Map<String, String>> _strings = {
   'shareSave.saved': {'en': 'Saved', 'ru': 'Сохранено'},
   'shareSave.shareError': {'en': 'Could not share: {error}', 'ru': 'Не удалось поделиться: {error}'},
   'shareSave.saveError': {'en': 'Could not save: {error}', 'ru': 'Не удалось сохранить: {error}'},
+
+  // Shared between add_receipt_screen.dart and driving_details_screen.dart
+  // (Пакет 38, audit 2026-08-18): both hit the identical "row 8-27 range is
+  // full" condition on the same underlying Mileage Report file, previously
+  // driving_details_screen.dart borrowed 'addReceipt.noRoomTitle' for this
+  // dialog's title while using its own key for the body -- a neutral
+  // shared key for the (identical) title is more honest than that mix.
+  'mileageReport.noRoomTitle': {'en': 'No room left', 'ru': 'Нет свободных строк'},
+
+  // Shared across any screen that calls changeMileagePeriodRate (settings,
+  // add/edit period) -- same underlying file, same two structural failure
+  // modes, one message each regardless of which screen triggered it.
+  'mileageReport.rateChangeStructureError': {
+    'en': 'Could not change the rate: the period\'s Excel file looks like it was edited outside the app. '
+        'Try restoring it from a backup, or contact the developer if this keeps happening.',
+    'ru': 'Не удалось изменить ставку: файл периода похож на изменённый вне приложения. '
+        'Попробуйте восстановить его из резервной копии; если повторяется — обратитесь к разработчику.',
+  },
+  'mileageReport.rateChangeRowOccupiedError': {
+    'en': 'Could not change the rate: the file is in an unexpected state right now. '
+        'Try again in a moment; if this keeps happening, contact the developer.',
+    'ru': 'Не удалось изменить ставку: файл сейчас в неожиданном состоянии. '
+        'Попробуйте ещё раз чуть позже; если повторяется — обратитесь к разработчику.',
+  },
 
   'archive.title': {'en': 'Past periods', 'ru': 'Прошлые периоды'},
   'archive.empty': {

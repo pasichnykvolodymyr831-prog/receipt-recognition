@@ -1,6 +1,8 @@
 import 'package:excel/excel.dart';
 
 import 'managed_cells.dart';
+import 'mileage_report_engine.dart';
+import 'timesheet_engine.dart';
 import 'xlsx_raw_inspect.dart';
 
 /// Result of an integrity check (section 13.2): whether the write is safe
@@ -17,7 +19,6 @@ class IntegrityReport {
   final List<String> issues;
   final List<String> styleWarnings;
   const IntegrityReport(this.ok, this.issues, {this.styleWarnings = const []});
-  factory IntegrityReport.success() => const IntegrityReport(true, []);
 }
 
 /// Verifies a freshly-written Mileage Report workbook: the 5 hidden sheets
@@ -72,7 +73,7 @@ IntegrityReport checkMileageReportIntegrity({
   if (sheet == null) {
     issues.add('Sheet "Truman Homes" missing');
   } else {
-    for (var row = 8; row <= 27; row++) {
+    for (var row = MileageReportEngine.firstDataRow; row <= MileageReportEngine.lastDataRow; row++) {
       _expectFormula(sheet, templateSheet, 'I$row', issues);
       _expectFormula(sheet, templateSheet, 'L$row', issues);
     }
@@ -96,7 +97,7 @@ IntegrityReport checkMileageReportIntegrity({
   if (drivingSheet == null) {
     issues.add('Sheet "Driving Details" missing');
   } else {
-    for (var row = 2; row <= 18; row++) {
+    for (var row = MileageReportEngine.firstDrivingRow; row <= MileageReportEngine.lastDrivingRow; row++) {
       _expectFormula(drivingSheet, templateDrivingSheet, 'D$row', issues);
     }
     _expectFormula(drivingSheet, templateDrivingSheet, 'C19', issues);
@@ -138,8 +139,8 @@ IntegrityReport checkTimesheetIntegrity({
     return IntegrityReport(false, ['Sheet "Sheet1" missing']);
   }
 
-  for (var row = 8; row <= 38; row++) {
-    final expectedItem = row - 8 + 1;
+  for (var row = TimesheetEngine.firstDayRow; row <= TimesheetEngine.lastDayRow; row++) {
+    final expectedItem = row - TimesheetEngine.firstDayRow + 1;
     final value = sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row - 1)).value;
     final actual = value is IntCellValue
         ? value.value

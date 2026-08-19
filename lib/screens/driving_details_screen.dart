@@ -7,6 +7,7 @@ import '../services/safe_xlsx_write.dart';
 import '../services/settings_repository.dart';
 import '../utils/number_input.dart';
 import '../utils/text_input.dart';
+import '../utils/time_format.dart';
 import '../xlsx/mileage_report_engine.dart';
 
 /// Manual Driving Details entry (section 9): Date, Trip, KM. Writes to the
@@ -45,6 +46,7 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
       firstDate: widget.period.start,
       lastDate: widget.period.end,
     );
+    if (!mounted) return;
     if (picked != null) setState(() => _date = picked);
   }
 
@@ -102,7 +104,7 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
         showDialog<void>(
           context: context,
           builder: (context) => AlertDialog(
-            title: Text(t(context, 'addReceipt.noRoomTitle')),
+            title: Text(t(context, 'mileageReport.noRoomTitle')),
             content: Text(t(context, 'drivingDetails.noRoomContent')),
             actions: [
               TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(t(context, 'common.ok'))),
@@ -121,7 +123,7 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final dateFmt = '${_date.year}-${_date.month.toString().padLeft(2, '0')}-${_date.day.toString().padLeft(2, '0')}';
+    final dateFmt = formatDate(_date);
 
     return Scaffold(
       appBar: AppBar(title: Text(t(context, 'drivingDetails.title'))),

@@ -4,9 +4,9 @@ import '../l10n/app_strings.dart';
 import '../models/payroll_period.dart';
 import '../services/period_file_manager.dart';
 import '../services/period_repository.dart';
-import '../services/safe_xlsx_write.dart';
 import '../services/settings_repository.dart';
 import '../utils/number_input.dart';
+import '../utils/time_format.dart';
 import '../xlsx/mileage_report_engine.dart';
 
 /// The manual "add / edit period" form (section 5). Used both from Settings
@@ -95,11 +95,13 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
+    if (!mounted) return;
     if (picked != null) setState(() => onPicked(picked));
   }
 
   Future<void> _pickTime(TimeOfDay initial, void Function(TimeOfDay) onPicked) async {
     final picked = await showTimePicker(context: context, initialTime: initial);
+    if (!mounted) return;
     if (picked != null) setState(() => onPicked(picked));
   }
 
@@ -220,11 +222,8 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
           ((oldRate == null) != (newRate == null) ||
               (oldRate != null && newRate != null && !MileageReportEngine.ratesEqual(oldRate, newRate)));
       if (rateChanged) {
-        final file = await PeriodFileManager().mileageReportFile(period);
-        if (await file.exists()) {
-          final effectiveRate = newRate ?? (await SettingsRepository().load()).kmRate;
-          await changeMileagePeriodRate(file, newRate: effectiveRate);
-        }
+        final effectiveRate = newRate ?? (await SettingsRepository().load()).kmRate;
+        await PeriodFileManager().writeRateIfFileExists(period, effectiveRate);
       }
 
       final repo = PeriodRepository();
@@ -239,6 +238,10 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
       if (Navigator.of(context).canPop()) {
         Navigator.of(context).pop(period);
       }
+    } on MileageReportStructureException {
+      if (mounted) setState(() => _error = t(context, 'mileageReport.rateChangeStructureError'));
+    } on MileageReportRowOccupiedException {
+      if (mounted) setState(() => _error = t(context, 'mileageReport.rateChangeRowOccupiedError'));
     } catch (e) {
       if (mounted) setState(() => _error = t(context, 'addPeriod.saveError', {'error': '$e'}));
     } finally {
@@ -248,8 +251,6 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final dateFmt = (DateTime d) => '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-
     return PopScope(
       canPop: !widget.blocking,
       child: Scaffold(
@@ -275,18 +276,18 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
               ),
             ListTile(
               title: Text(t(context, 'addPeriod.periodStart')),
-              subtitle: Text(dateFmt(_start)),
+              subtitle: Text(formatDate(_start)),
               onTap: () => _pickDate(_start, (d) => _start = d),
             ),
             ListTile(
               title: Text(t(context, 'addPeriod.periodEnd')),
-              subtitle: Text(dateFmt(_end)),
+              subtitle: Text(formatDate(_end)),
               onTap: () => _pickDate(_end, (d) => _end = d),
             ),
             const Divider(),
             ListTile(
               title: Text(t(context, 'addPeriod.dueDate')),
-              subtitle: Text(dateFmt(_dueDate)),
+              subtitle: Text(formatDate(_dueDate)),
               onTap: () => _pickDate(_dueDate, (d) => _dueDate = d),
             ),
             ListTile(
@@ -306,7 +307,7 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
             if (_hasWeekendAltDue) ...[
               ListTile(
                 title: Text(t(context, 'addPeriod.weekendDueDate')),
-                subtitle: Text(dateFmt(_weekendAltDueDate!)),
+                subtitle: Text(formatDate(_weekendAltDueDate!)),
                 onTap: () => _pickDate(_weekendAltDueDate!, (d) => _weekendAltDueDate = d),
               ),
               ListTile(
@@ -326,7 +327,7 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
                 ),
               ],
             ),
-            for (var i = 0; i < _statHolidays.length; i++) _buildStatHolidayRow(i, dateFmt),
+            for (var i = 0; i < _statHolidays.length; i++) _buildStatHolidayRow(i, formatDate),
             const Divider(),
             Text(t(context, 'addPeriod.kmRate'), style: const TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
@@ -365,7 +366,7 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
           const SizedBox(width: 8),
           TextButton(
             onPressed: () => _pickDate(row.date ?? _start, (d) => setState(() => row.date = d)),
-            child: Text(row.date != null ? dateFmt(row.date!) : t(context, 'addPeriod.pickDate')),
+            child: Text(row.date != null ? formatDate(row.date!) : t(context, 'addPeriod.pickDate')),
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),

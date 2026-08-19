@@ -1,5 +1,13 @@
 import 'package:flutter/material.dart';
 
+/// Formats a [DateTime] as `YYYY-MM-DD` -- the app's one canonical date
+/// display format (Excel cells hold real `DateTime`/`DateCellValue` values,
+/// not this string; this is purely for on-screen text). Previously
+/// reimplemented independently across several screens (Пакет 32, audit
+/// 2026-08-18) -- always use this instead of repeating the padLeft calls.
+String formatDate(DateTime d) =>
+    '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
 /// Formats a [TimeOfDay] as `{h}{mm if not :00}{am|pm}`, e.g. 8:00 -> "8am",
 /// 16:30 -> "430pm", 9:15 -> "915am". Matches the Timesheet template's
 /// existing text convention for Start Time / Finish Time (section 6.3).

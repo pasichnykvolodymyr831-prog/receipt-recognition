@@ -39,6 +39,12 @@ class NotificationService {
         ?.requestNotificationsPermission();
   }
 
+  // The epoch (2020-01-01) is arbitrary -- just a fixed point safely before
+  // any realistic period start date, chosen to keep the resulting id small
+  // (flutter_local_notifications' id is a 32-bit int). Collision-safe by
+  // construction: periods are sequential, non-overlapping date ranges, so
+  // any two periods always have different `start` dates and therefore
+  // different day-counts here (Пакет 39, audit 2026-08-18).
   int _idFor(PayrollPeriod period) => period.start.difference(DateTime(2020, 1, 1)).inDays;
 
   /// Schedules the "due - 2 days" reminder for [period]. Safe to call on
@@ -68,9 +74,5 @@ class NotificationService {
       androidScheduleMode: AndroidScheduleMode.inexact,
       payload: period.fileId,
     );
-  }
-
-  Future<void> cancelReminder(PayrollPeriod period) async {
-    await _plugin.cancel(id: _idFor(period));
   }
 }

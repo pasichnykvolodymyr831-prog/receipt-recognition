@@ -343,11 +343,12 @@ Future<void> saveMileageReceipt(
   required double? periodKmRate,
   required double settingsDefaultRate,
   void Function(SaveXlsxPhase)? onPhase,
+  BackupManager? backupManager,
 }) async {
   onPhase?.call(SaveXlsxPhase.reading);
   final sourceBytes = await file.readAsBytes();
   final templateBytes = await _mileageTemplateBytes();
-  await _backupManager.backupBeforeWrite(file);
+  await (backupManager ?? _backupManager).backupBeforeWrite(file);
   final result = await _runMileageIsolate(
     sourceBytes: sourceBytes,
     templateBytes: templateBytes,
@@ -370,11 +371,12 @@ Future<void> saveMileageDrivingDetail(
   required double? periodKmRate,
   required double settingsDefaultRate,
   void Function(SaveXlsxPhase)? onPhase,
+  BackupManager? backupManager,
 }) async {
   onPhase?.call(SaveXlsxPhase.reading);
   final sourceBytes = await file.readAsBytes();
   final templateBytes = await _mileageTemplateBytes();
-  await _backupManager.backupBeforeWrite(file);
+  await (backupManager ?? _backupManager).backupBeforeWrite(file);
   final result = await _runMileageIsolate(
     sourceBytes: sourceBytes,
     templateBytes: templateBytes,
@@ -402,11 +404,12 @@ Future<void> changeMileagePeriodRate(
   File file, {
   required double newRate,
   void Function(SaveXlsxPhase)? onPhase,
+  BackupManager? backupManager,
 }) async {
   onPhase?.call(SaveXlsxPhase.reading);
   final sourceBytes = await file.readAsBytes();
   final templateBytes = await _mileageTemplateBytes();
-  await _backupManager.backupBeforeWrite(file);
+  await (backupManager ?? _backupManager).backupBeforeWrite(file);
   final result = await _runMileageIsolate(
     sourceBytes: sourceBytes,
     templateBytes: templateBytes,
@@ -583,11 +586,12 @@ Future<Uint8List> saveTimesheetDay(
   required int row,
   required TimesheetDayInput input,
   void Function(SaveXlsxPhase)? onPhase,
+  BackupManager? backupManager,
 }) async {
   onPhase?.call(SaveXlsxPhase.reading);
   final sourceBytes = await file.readAsBytes();
   final templateBytes = await _timesheetTemplateBytes();
-  await _backupManager.backupBeforeWrite(file);
+  await (backupManager ?? _backupManager).backupBeforeWrite(file);
   final result = await _runTimesheetIsolate(
     sourceBytes: sourceBytes,
     templateBytes: templateBytes,
@@ -607,11 +611,12 @@ Future<Uint8List> clearTimesheetDay(
   File file, {
   required int row,
   void Function(SaveXlsxPhase)? onPhase,
+  BackupManager? backupManager,
 }) async {
   onPhase?.call(SaveXlsxPhase.reading);
   final sourceBytes = await file.readAsBytes();
   final templateBytes = await _timesheetTemplateBytes();
-  await _backupManager.backupBeforeWrite(file);
+  await (backupManager ?? _backupManager).backupBeforeWrite(file);
   final result = await _runTimesheetIsolate(
     sourceBytes: sourceBytes,
     templateBytes: templateBytes,

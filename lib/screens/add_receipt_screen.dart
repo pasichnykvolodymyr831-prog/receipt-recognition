@@ -12,6 +12,7 @@ import '../services/safe_xlsx_write.dart';
 import '../services/settings_repository.dart';
 import '../utils/number_input.dart';
 import '../utils/text_input.dart';
+import '../utils/time_format.dart';
 import '../xlsx/mileage_report_engine.dart';
 
 enum _EntryMode { none, ocr, manual }
@@ -125,6 +126,7 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
     );
+    if (!mounted) return;
     if (picked != null) {
       setState(() {
         _date = picked;
@@ -160,6 +162,9 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
     final subtotal = _editing ? parseDecimal(_subtotalController.text) : _subtotal;
     final gst = _editing ? parseDecimal(_gstController.text) : _gst;
     if (subtotal == null || gst == null || subtotal == 0) return false;
+    // 0.05: the standard Canadian GST rate (5%) -- this warning exists to
+    // catch a mis-scanned/mis-typed GST field, not to enforce provincial
+    // tax law, so it's intentionally just the federal rate.
     final expected = subtotal * 0.05;
     if (expected == 0) return false;
     // Both numerator and denominator by modulus (section 8): a plain
@@ -167,6 +172,9 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
     // Subtotal -> negative expected), silently disabling this check right
     // when it's needed most.
     final deviation = (gst - expected).abs() / expected.abs();
+    // 0.15: 15% tolerance around the expected 5% -- wide enough to absorb
+    // rounding on the receipt itself and OCR digit noise without going
+    // silent on a genuinely wrong GST value (Пакет 39, audit 2026-08-18).
     return deviation > 0.15;
   }
 
@@ -213,7 +221,7 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
         showDialog<void>(
           context: context,
           builder: (context) => AlertDialog(
-            title: Text(t(context, 'addReceipt.noRoomTitle')),
+            title: Text(t(context, 'mileageReport.noRoomTitle')),
             content: Text(t(context, 'addReceipt.noRoomContent')),
             actions: [
               TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(t(context, 'common.ok'))),
@@ -288,9 +296,7 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
   }
 
   Widget _buildConfirmForm() {
-    final dateFmt = _date == null
-        ? '—'
-        : '${_date!.year}-${_date!.month.toString().padLeft(2, '0')}-${_date!.day.toString().padLeft(2, '0')}';
+    final dateFmt = _date == null ? '—' : formatDate(_date!);
 
     return ListView(
       padding: const EdgeInsets.all(16),
