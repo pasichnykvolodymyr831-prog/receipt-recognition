@@ -85,6 +85,14 @@ import 'package:xml/xml.dart';
 ///    cell's resolved number-format *code* (not index) against the
 ///    template's and repairs any mismatch, same as font/border/fill.
 ///
+/// Separately (not a package defect, a deliberate policy):
+/// `_clearManagedRowHeightOverride` strips any explicit row height off the
+/// Description/Trip rows (Truman Homes 8-27, Driving Details 2-18) on every
+/// write, so real Excel's own auto-fit (already enabled via `wrapText="1"`
+/// on those columns) decides their height instead of a one-size-fits-all
+/// template value -- see that function's doc for why simply not restoring
+/// from the template isn't enough on its own.
+///
 /// Column-width/hidden, row-height, and formula-cache repairs are applied
 /// for every sheet named in [allSheets] (these are workbook-encode-time
 /// defects, not per-cell corruption, so they recur on every single save
@@ -303,6 +311,11 @@ Uint8List patchRawXlsxStyles(
 
     _patchColumns(sheetDoc, templateSheetDoc);
     _patchRowHeights(sheetDoc, templateSheetDoc);
+    if (name == 'Truman Homes') {
+      _clearManagedRowHeightOverride(sheetDoc, firstRow: 8, lastRow: 27);
+    } else if (name == 'Driving Details') {
+      _clearManagedRowHeightOverride(sheetDoc, firstRow: 2, lastRow: 18);
+    }
     _stripFormulaValueCache(sheetDoc);
     if (alignmentSheets.contains(name)) {
       _insertMissingMergedCells(sheetDoc);
@@ -694,6 +707,48 @@ void _patchRowHeights(XmlDocument outputSheetDoc, XmlDocument templateSheetDoc) 
     } else {
       sheetData.children.add(newRow);
     }
+  }
+}
+
+/// Section 13 п.12: rows holding Description (Truman Homes 8-27) / Trip
+/// (Driving Details 2-18) should grow to fit wrapped text -- `wrapText="1"`
+/// is already set on both columns' cell style, so real Excel is fully
+/// capable of auto-fitting these rows on its own, *if* nothing forces an
+/// explicit height on them. Two things stand in the way, both handled here:
+///
+/// 1. The bundled template currently hardcodes every one of these rows to
+///    one fixed height (45.75 / 30) regardless of content, so an empty
+///    period wastes hundreds of points of vertical space before reaching
+///    the Total row.
+/// 2. Even after fixing the template, the `excel` package (v4.0.6) doesn't
+///    actually *forget* a row's height on decode/re-encode: `parse.dart`
+///    unconditionally reads any `ht` attribute into `Sheet._rowHeights`
+///    regardless of `customHeight`, and `save_file.dart::_setRows` writes
+///    it straight back out on every single encode if that map has an
+///    entry -- independent of what the template says. So a real,
+///    already-existing file that currently carries `ht="45.75"` on these
+///    rows (baked in by every earlier write) will keep reproducing that
+///    same height forever through the object model alone; simply changing
+///    the template (as was enough for Пакет-fixing the Timesheet column
+///    widths) would NOT self-heal it.
+///
+/// This function is the fix for both: it unconditionally strips `ht`/
+/// `customHeight` from the given row range on every single write
+/// (creation or not), so the object-model's carried-over height can never
+/// survive a write, and no template change is even required for
+/// correctness (only for hygiene). A row in this range is guaranteed to
+/// still have at least one `<c>` element and never disappear entirely --
+/// style_heal.dart's `_healAllCells` touches every cell in the template's
+/// used range on every write, and merely reading `Sheet.cell(idx)`
+/// materializes an entry in the `excel` package's internal sheet data
+/// regardless of whether a style assignment actually happens.
+void _clearManagedRowHeightOverride(XmlDocument outputSheetDoc, {required int firstRow, required int lastRow}) {
+  final sheetData = outputSheetDoc.findAllElements('sheetData').first;
+  for (final row in sheetData.findElements('row')) {
+    final r = int.tryParse(row.getAttribute('r') ?? '');
+    if (r == null || r < firstRow || r > lastRow) continue;
+    row.removeAttribute('ht');
+    row.removeAttribute('customHeight');
   }
 }
 

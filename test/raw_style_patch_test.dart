@@ -465,4 +465,122 @@ void main() {
           reason: 'template expects numFmtId 2 ("0.00") but the output cell had General -- must be repaired');
     });
   });
+
+  group('dynamic row height for Description/Trip (section 13 п.12, Пакет 25 -- Вариант A)', () {
+    const workbookTrumanHomes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="Truman Homes" sheetId="1" r:id="rId1"/></sheets></workbook>';
+    const workbookDrivingDetails = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="Driving Details" sheetId="1" r:id="rId1"/></sheets></workbook>';
+
+    String sheetWithRows(List<(int row, String? ht)> rows) {
+      final rowsXml = rows.map((entry) {
+        final (r, ht) = entry;
+        final htAttrs = ht == null ? '' : ' ht="$ht" customHeight="1"';
+        return '<row r="$r"$htAttrs><c r="A$r"><v>1</v></c></row>';
+      }).join();
+      return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+          '<sheetData>$rowsXml</sheetData></worksheet>';
+    }
+
+    test('Truman Homes: rows 8-27 lose ht/customHeight even though both output and template still carry the '
+        'old fixed 45.75 (real-world "already existing file" scenario)', () {
+      // Template matches today's real bundled template: every row 8-27 fixed
+      // at 45.75, row 28 (Total, outside the managed range) at 14.25 -- both
+      // customHeight="1".
+      final templateSheet = sheetWithRows([
+        (7, '15'),
+        (8, '45.75'),
+        (15, '45.75'),
+        (27, '45.75'),
+        (28, '14.25'),
+      ]);
+      // Output as the `excel` package would actually produce it for an
+      // already-existing real file: rows 7/8/15/27 already carry the old
+      // 45.75 inherited straight through the object model (parse.dart reads
+      // `ht` regardless of customHeight, save_file.dart writes it back);
+      // row 28 is missing its height entirely, as if `_setRows` dropped it.
+      final encodedSheet = sheetWithRows([
+        (7, '45.75'),
+        (8, '45.75'),
+        (15, '45.75'),
+        (27, '45.75'),
+        (28, null),
+      ]);
+
+      final templateBytes = _buildXlsxWithWorkbook(workbookTrumanHomes, templateSheet);
+      final encodedBytes = _buildXlsxWithWorkbook(workbookTrumanHomes, encodedSheet);
+
+      final patched = patchRawXlsxStyles(encodedBytes, templateBytes,
+          allSheets: const ['Truman Homes'], alignmentSheets: const ['Truman Homes']);
+      final rows = {
+        for (final row in _sheetOf(patched).findAllElements('row'))
+          int.parse(row.getAttribute('r')!): row,
+      };
+
+      for (final r in [8, 15, 27]) {
+        expect(rows[r]!.getAttribute('ht'), isNull, reason: 'row $r must lose its forced height');
+        expect(rows[r]!.getAttribute('customHeight'), isNull, reason: 'row $r must lose customHeight');
+      }
+      expect(rows[7]!.getAttribute('ht'), '15',
+          reason: 'row 7 is outside the managed range (8-27) -- _patchRowHeights should leave it matching the template');
+      expect(rows[28]!.getAttribute('ht'), '14.25',
+          reason: 'row 28 (Total) is outside the managed range -- must still be restored from the template as before');
+      expect(rows[28]!.getAttribute('customHeight'), '1');
+    });
+
+    test('Driving Details: rows 2-18 lose ht/customHeight, row 19 (outside range) stays protected', () {
+      final templateSheet = sheetWithRows([
+        (1, '15.75'),
+        (2, '30'),
+        (10, '30'),
+        (18, '30'),
+        (19, '15.75'),
+      ]);
+      final encodedSheet = sheetWithRows([
+        (1, '15.75'),
+        (2, '30'),
+        (10, '30'),
+        (18, '30'),
+        (19, null),
+      ]);
+
+      final templateBytes = _buildXlsxWithWorkbook(workbookDrivingDetails, templateSheet);
+      final encodedBytes = _buildXlsxWithWorkbook(workbookDrivingDetails, encodedSheet);
+
+      final patched = patchRawXlsxStyles(encodedBytes, templateBytes,
+          allSheets: const ['Driving Details'], alignmentSheets: const ['Driving Details']);
+      final rows = {
+        for (final row in _sheetOf(patched).findAllElements('row'))
+          int.parse(row.getAttribute('r')!): row,
+      };
+
+      for (final r in [2, 10, 18]) {
+        expect(rows[r]!.getAttribute('ht'), isNull, reason: 'row $r must lose its forced height');
+        expect(rows[r]!.getAttribute('customHeight'), isNull, reason: 'row $r must lose customHeight');
+      }
+      expect(rows[19]!.getAttribute('ht'), '15.75',
+          reason: 'row 19 is outside the managed range (2-18) -- must still be restored from the template');
+    });
+
+    test('a sheet with a different name entirely is not touched by the new step', () {
+      const workbookOther = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+          'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+          '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>';
+      final sheet = sheetWithRows([(8, '45.75')]);
+      final bytes = _buildXlsxWithWorkbook(workbookOther, sheet);
+
+      final patched =
+          patchRawXlsxStyles(bytes, bytes, allSheets: const ['Sheet1'], alignmentSheets: const ['Sheet1']);
+      final row8 = _sheetOf(patched).findAllElements('row').first;
+
+      expect(row8.getAttribute('ht'), '45.75',
+          reason: 'the new dynamic-height step only applies to Truman Homes/Driving Details by name');
+    });
+  });
 }
