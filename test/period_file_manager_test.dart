@@ -229,6 +229,123 @@ void main() {
     });
   });
 
+  group('writeHeaderIfFilesExist (Пакет 9: Settings name/phone propagation)', () {
+    late Directory docsDir;
+
+    setUp(() {
+      docsDir = Directory.systemTemp.createTempSync('period_file_manager_header_docs');
+      PathProviderPlatform.instance = _FakePathProviderPlatform(docsDir.path);
+    });
+
+    tearDown(() {
+      docsDir.deleteSync(recursive: true);
+    });
+
+    final period = PayrollPeriod(
+      key: '2026-08-09_2026-08-23',
+      start: DateTime(2026, 8, 9),
+      end: DateTime(2026, 8, 23),
+      due: DateTime(2026, 8, 21, 16, 30),
+      weekendAltDue: DateTime(2026, 8, 23, 8, 30),
+      statHolidays: const [],
+    );
+
+    test('writes B3/C2/C6 to both files when they already exist', () async {
+      await PeriodFileManager().ensureFilesExist(period, AppSettings.defaults);
+
+      await PeriodFileManager()
+          .writeHeaderIfFilesExist(period, employeeName: 'New Name', phone: '555-1234');
+
+      final mileageFile = await PeriodFileManager().mileageReportFile(period);
+      final mileage = Excel.decodeBytes(normalizeXlsxRelationshipTargets(await mileageFile.readAsBytes()));
+      expect(mileage.sheets['Truman Homes']!.cell(CellIndex.indexByString('B3')).value.toString(),
+          contains('New Name'));
+
+      final timesheetFile = await PeriodFileManager().timesheetFile(period);
+      final timesheet = Excel.decodeBytes(normalizeXlsxRelationshipTargets(await timesheetFile.readAsBytes()));
+      expect(timesheet.sheets['Sheet1']!.cell(CellIndex.indexByString('C2')).value.toString(),
+          contains('New Name'));
+      expect(timesheet.sheets['Sheet1']!.cell(CellIndex.indexByString('C6')).value.toString(),
+          contains('555-1234'));
+    });
+
+    test('does not touch the period label (M3/C5) -- only the name/phone cells', () async {
+      await PeriodFileManager().ensureFilesExist(period, AppSettings.defaults);
+      final mileageFile = await PeriodFileManager().mileageReportFile(period);
+      final before = Excel.decodeBytes(normalizeXlsxRelationshipTargets(await mileageFile.readAsBytes()));
+      final labelBefore = before.sheets['Truman Homes']!.cell(CellIndex.indexByString('M3')).value.toString();
+
+      await PeriodFileManager().writeHeaderIfFilesExist(period, employeeName: 'New Name', phone: '555-1234');
+
+      final after = Excel.decodeBytes(normalizeXlsxRelationshipTargets(await mileageFile.readAsBytes()));
+      expect(after.sheets['Truman Homes']!.cell(CellIndex.indexByString('M3')).value.toString(), labelBefore);
+    });
+
+    test('is a no-op when neither file exists yet (period not created)', () async {
+      await PeriodFileManager().writeHeaderIfFilesExist(period, employeeName: 'New Name', phone: '555-1234');
+
+      final mileageFile = await PeriodFileManager().mileageReportFile(period);
+      final timesheetFile = await PeriodFileManager().timesheetFile(period);
+      expect(await mileageFile.exists(), false, reason: 'must not create the file as a side effect');
+      expect(await timesheetFile.exists(), false, reason: 'must not create the file as a side effect');
+    });
+  });
+
+  group('periodsOutsideRetention (Пакет 9: the pure filter cleanupAccordingToRetention and the '
+      'Settings confirmation-count dialog both share)', () {
+    final oldPeriod = PayrollPeriod(
+      key: 'old',
+      start: DateTime(2020, 1, 9),
+      end: DateTime(2020, 1, 23),
+      due: DateTime(2020, 1, 21),
+    );
+    final recentPeriod = PayrollPeriod(
+      key: 'recent',
+      start: DateTime(2026, 8, 9),
+      end: DateTime(2026, 8, 23),
+      due: DateTime(2026, 8, 21),
+    );
+    final currentPeriod = PayrollPeriod(
+      key: 'current',
+      start: DateTime(2026, 8, 24),
+      end: DateTime(2026, 9, 8),
+      due: DateTime(2026, 9, 6),
+    );
+
+    test('excludes the current period and periods within the window, keeps ones older than it', () {
+      final result = PeriodFileManager().periodsOutsideRetention(
+        allPeriods: [oldPeriod, recentPeriod, currentPeriod],
+        currentPeriod: currentPeriod,
+        retention: RetentionPolicy.oneMonth,
+        now: DateTime(2026, 8, 20),
+      );
+
+      expect(result, [oldPeriod]);
+    });
+
+    test('a `never` policy returns every period except the current one', () {
+      final result = PeriodFileManager().periodsOutsideRetention(
+        allPeriods: [oldPeriod, recentPeriod, currentPeriod],
+        currentPeriod: currentPeriod,
+        retention: RetentionPolicy.never,
+        now: DateTime(2026, 8, 20),
+      );
+
+      expect(result, [oldPeriod, recentPeriod]);
+    });
+
+    test('an empty result when nothing falls outside the window', () {
+      final result = PeriodFileManager().periodsOutsideRetention(
+        allPeriods: [recentPeriod, currentPeriod],
+        currentPeriod: currentPeriod,
+        retention: RetentionPolicy.oneYear,
+        now: DateTime(2026, 8, 20),
+      );
+
+      expect(result, isEmpty);
+    });
+  });
+
   group('cleanupAccordingToRetention (Пакет 21: backup deletion, audit 2026-08-18)', () {
     late Directory docsDir;
     late Directory reportsDir;

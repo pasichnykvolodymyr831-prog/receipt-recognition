@@ -15,6 +15,8 @@ const Map<String, Map<String, String>> _strings = {
   'common.save': {'en': 'Save', 'ru': 'Сохранить'},
   'common.ok': {'en': 'OK', 'ru': 'ОК'},
   'common.edit': {'en': 'Edit', 'ru': 'Редактировать'},
+  'common.cancel': {'en': 'Cancel', 'ru': 'Отмена'},
+  'common.confirm': {'en': 'Confirm', 'ru': 'Подтвердить'},
 
   // Save-progress phases (a period-file save commonly takes several
   // seconds, dominated by the xlsx library's own decode/encode cost --
@@ -179,6 +181,15 @@ const Map<String, Map<String, String>> _strings = {
   'settings.retentionThreeMonths': {'en': 'Keep last 3 months', 'ru': 'Хранить 3 месяца'},
   'settings.retentionSixMonths': {'en': 'Keep last 6 months', 'ru': 'Хранить 6 месяцев'},
   'settings.retentionOneYear': {'en': 'Keep last year', 'ru': 'Хранить последний год'},
+  'settings.retentionConfirmTitle': {'en': 'Change retention?', 'ru': 'Изменить хранение?'},
+  'settings.retentionConfirmCount': {
+    'en': 'This will delete the files of {count} past period(s) that fall outside the new window.',
+    'ru': 'Это удалит файлы {count} прошлых периодов, не попадающих в новое окно хранения.',
+  },
+  'settings.retentionConfirmAll': {
+    'en': 'This will delete the files of every past period -- the archive will be fully cleared.',
+    'ru': 'Это удалит файлы всех прошлых периодов -- архив будет полностью очищен.',
+  },
   'settings.saved': {'en': 'Settings saved', 'ru': 'Настройки сохранены'},
   'settings.saveError': {'en': 'Could not save: {error}', 'ru': 'Не удалось сохранить: {error}'},
   'settings.addNextPeriod': {'en': 'Add next payroll period', 'ru': 'Добавить следующий период'},

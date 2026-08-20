@@ -171,6 +171,11 @@ class _UpdateReceiptOp extends _MileageOp {
   const _UpdateReceiptOp({required this.row, required this.receipt});
 }
 
+class _UpdateMileageHeaderOp extends _MileageOp {
+  final String employeeName;
+  const _UpdateMileageHeaderOp(this.employeeName);
+}
+
 class _UpdateDrivingDetailOp extends _MileageOp {
   final int row;
   final DateTime date;
@@ -235,6 +240,8 @@ void _mileageIsolateEntry(_MileageRequest req) {
         engine.changeRate(o.newRate);
       case _UpdateReceiptOp o:
         engine.updateReceipt(o.row, o.receipt);
+      case _UpdateMileageHeaderOp o:
+        engine.updateEmployeeName(o.employeeName);
       case _UpdateDrivingDetailOp o:
         engine.updateDrivingDetail(
           o.row,
@@ -481,6 +488,30 @@ Future<void> updateMileageReceipt(
   await _atomicWrite(file, result.bytes);
 }
 
+/// Rewrites B3 (employee name) on [file] in place (section 5/11, Пакет 9) --
+/// used when Settings' name changes and the current period's file already
+/// exists. Doesn't touch M3 (period label) or any data row.
+Future<void> updateMileageEmployeeName(
+  File file, {
+  required String employeeName,
+  void Function(SaveXlsxPhase)? onPhase,
+  BackupManager? backupManager,
+}) async {
+  onPhase?.call(SaveXlsxPhase.reading);
+  final sourceBytes = await file.readAsBytes();
+  final templateBytes = await _mileageTemplateBytes();
+  await (backupManager ?? _backupManager).backupBeforeWrite(file);
+  final result = await _runMileageIsolate(
+    sourceBytes: sourceBytes,
+    templateBytes: templateBytes,
+    healHiddenSheets: false,
+    op: _UpdateMileageHeaderOp(employeeName),
+    onPhase: onPhase,
+  );
+  await logStyleWarnings('updateMileageEmployeeName', file.uri.pathSegments.last, result.styleWarnings);
+  await _atomicWrite(file, result.bytes);
+}
+
 /// Overwrites an already-saved Driving Details trip on [file] in place
 /// (section 14) and recalculates the Kilometers row -- no free-row search,
 /// unlike [saveMileageDrivingDetail]. [row] must come from a
@@ -621,6 +652,12 @@ class _ClearTimesheetDayOp extends _TimesheetOp {
   const _ClearTimesheetDayOp(this.row);
 }
 
+class _UpdateTimesheetHeaderOp extends _TimesheetOp {
+  final String employeeName;
+  final String phone;
+  const _UpdateTimesheetHeaderOp({required this.employeeName, required this.phone});
+}
+
 class _TimesheetRequest {
   final Uint8List sourceBytes;
   final Uint8List templateBytes;
@@ -647,6 +684,8 @@ void _timesheetIsolateEntry(_TimesheetRequest req) {
         engine.writeDay(o.row, o.input);
       case _ClearTimesheetDayOp o:
         engine.clearDay(o.row);
+      case _UpdateTimesheetHeaderOp o:
+        engine.updateHeader(employeeName: o.employeeName, phone: o.phone);
     }
 
     req.replyPort.send(SaveXlsxPhase.writing);
@@ -788,6 +827,32 @@ Future<Uint8List> clearTimesheetDay(
     onPhase: onPhase,
   );
   await logStyleWarnings('clearTimesheetDay', file.uri.pathSegments.last, result.styleWarnings);
+  await _atomicWrite(file, result.bytes);
+  return result.bytes;
+}
+
+/// Rewrites C2 (employee name) and C6 (phone) on [file] in place (section
+/// 5/11, Пакет 9) -- used when Settings' name/phone changes and the current
+/// period's file already exists. Doesn't touch C5 (period label) or any day
+/// row.
+Future<Uint8List> updateTimesheetHeader(
+  File file, {
+  required String employeeName,
+  required String phone,
+  void Function(SaveXlsxPhase)? onPhase,
+  BackupManager? backupManager,
+}) async {
+  onPhase?.call(SaveXlsxPhase.reading);
+  final sourceBytes = await file.readAsBytes();
+  final templateBytes = await _timesheetTemplateBytes();
+  await (backupManager ?? _backupManager).backupBeforeWrite(file);
+  final result = await _runTimesheetIsolate(
+    sourceBytes: sourceBytes,
+    templateBytes: templateBytes,
+    op: _UpdateTimesheetHeaderOp(employeeName: employeeName, phone: phone),
+    onPhase: onPhase,
+  );
+  await logStyleWarnings('updateTimesheetHeader', file.uri.pathSegments.last, result.styleWarnings);
   await _atomicWrite(file, result.bytes);
   return result.bytes;
 }

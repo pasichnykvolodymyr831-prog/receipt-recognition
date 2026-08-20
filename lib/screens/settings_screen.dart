@@ -34,6 +34,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   double _originalKmRate = AppSettings.defaults.kmRate;
   String? _kmRateError;
 
+  // The name/phone as they were on disk when this screen loaded -- needed
+  // to detect whether either actually changed on save (Пакет 9: the file
+  // header propagation only fires on a real change, mirroring
+  // [_originalKmRate]'s rate-change check).
+  String _originalFullName = AppSettings.defaults.fullName;
+  String _originalPhone = '';
+
   @override
   void initState() {
     super.initState();
@@ -49,6 +56,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _retention = settings.retention;
     _kmRateController.text = settings.kmRate.toString();
     _originalKmRate = settings.kmRate;
+    _originalFullName = settings.fullName;
+    _originalPhone = settings.phone;
     if (mounted) setState(() => _loading = false);
   }
 
@@ -98,8 +107,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _originalKmRate = newKmRate;
       }
 
+      // Section 9/11: a changed employee name/phone propagates to the
+      // calendar-current period's already-existing file(s) immediately --
+      // same "only on a real change" guard as the rate above, and the same
+      // never-blindly-clobber-a-missing-file existence check inside
+      // [PeriodFileManager.writeHeaderIfFilesExist].
+      if (newSettings.fullName != _originalFullName || newSettings.phone != _originalPhone) {
+        final periodRepo = PeriodRepository();
+        final periods = await periodRepo.loadAll();
+        final current = periodRepo.findCurrent(periods, DateTime.now());
+        if (current != null) {
+          await PeriodFileManager().writeHeaderIfFilesExist(
+            current,
+            employeeName: newSettings.fullName,
+            phone: newSettings.phone,
+          );
+        }
+        _originalFullName = newSettings.fullName;
+        _originalPhone = newSettings.phone;
+      }
+
+      // Language is already applied live by the segmented button's
+      // onSelectionChanged -- nothing left to do here for it.
       if (mounted) {
-        AppLocale.of(context).setLanguage(_languageCode);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t(context, 'settings.saved'))));
       }
     } on MileageReportStructureException {
@@ -120,6 +150,69 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  /// Section 11: choosing a narrower retention window applies immediately
+  /// -- not deferred to the general Save button (раздел 0 п.13's "second
+  /// trigger") -- with a confirmation dialog first if it would actually
+  /// delete something, and a rollback to the previous value on Cancel.
+  Future<void> _onRetentionChanged(RetentionPolicy? newValue) async {
+    if (newValue == null || newValue == _retention) return;
+    final previous = _retention;
+    setState(() => _retention = newValue);
+
+    final periodRepo = PeriodRepository();
+    final periods = await periodRepo.loadAll();
+    final current = periodRepo.findCurrent(periods, DateTime.now());
+    final fileManager = PeriodFileManager();
+
+    if (current != null) {
+      final toDelete = fileManager.periodsOutsideRetention(
+        allPeriods: periods,
+        currentPeriod: current,
+        retention: newValue,
+        now: DateTime.now(),
+      );
+      if (toDelete.isNotEmpty) {
+        if (!mounted) return;
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(t(context, 'settings.retentionConfirmTitle')),
+            content: Text(newValue == RetentionPolicy.never
+                ? t(context, 'settings.retentionConfirmAll')
+                : t(context, 'settings.retentionConfirmCount', {'count': '${toDelete.length}'})),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(t(context, 'common.cancel')),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(t(context, 'common.confirm')),
+              ),
+            ],
+          ),
+        );
+        if (confirmed != true) {
+          if (mounted) setState(() => _retention = previous);
+          return;
+        }
+      }
+      await fileManager.cleanupAccordingToRetention(
+        allPeriods: periods,
+        currentPeriod: current,
+        retention: newValue,
+        now: DateTime.now(),
+      );
+    }
+
+    // Persisted immediately, independent of the general Save button --
+    // re-read from disk rather than reusing the in-memory _save() form
+    // fields, so an in-progress unsaved name/phone/rate edit elsewhere on
+    // this screen isn't accidentally persisted early by this trigger.
+    final onDisk = await _repo.load();
+    await _repo.save(onDisk.copyWith(retention: newValue));
   }
 
   Future<void> _addPeriod() async {
@@ -170,18 +263,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ButtonSegment(value: 'ru', label: Text(t(context, 'settings.russian'))),
                   ],
                   selected: {_languageCode},
-                  onSelectionChanged: (s) => setState(() => _languageCode = s.first),
+                  onSelectionChanged: (s) {
+                    setState(() => _languageCode = s.first);
+                    // Section 11: "применяется сразу" -- the visual switch
+                    // is immediate; persisting to Settings still happens in
+                    // the general _save(), since "сразу" isn't documented
+                    // to mean the interface language survives an app
+                    // restart before the user hits Save.
+                    AppLocale.of(context).setLanguage(_languageCode);
+                  },
                 ),
                 const SizedBox(height: 24),
                 Text(t(context, 'settings.employeeName'), style: const TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _firstNameController,
+                  maxLength: 50,
                   decoration: InputDecoration(labelText: t(context, 'settings.firstName')),
                 ),
                 const SizedBox(height: 8),
                 TextField(
                   controller: _lastNameController,
+                  maxLength: 50,
                   decoration: InputDecoration(labelText: t(context, 'settings.lastName')),
                 ),
                 const SizedBox(height: 24),
@@ -207,7 +310,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   items: RetentionPolicy.values
                       .map((r) => DropdownMenuItem(value: r, child: Text(t(context, _retentionKeys[r]!))))
                       .toList(),
-                  onChanged: (v) => setState(() => _retention = v!),
+                  onChanged: _onRetentionChanged,
                 ),
                 const SizedBox(height: 24),
                 FilledButton(

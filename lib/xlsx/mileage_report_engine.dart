@@ -152,6 +152,14 @@ class MileageReportEngine {
     setCellValue(_sheet, 'B3', TextCellValue(employeeName));
   }
 
+  /// Rewrites just B3 (employee name) on an already-existing file (Пакет 9:
+  /// a Settings name change propagates to the current period's file
+  /// immediately). Doesn't touch M3 (period label), unlike
+  /// [writePeriodHeader], which is only ever called once at creation.
+  void updateEmployeeName(String employeeName) {
+    setCellValue(_sheet, 'B3', TextCellValue(employeeName));
+  }
+
   /// Initializes row 8 as the Kilometers row on a freshly created period
   /// file, before any receipts exist (section 7, "Инициализация нового
   /// периода"). Must be called AFTER [writeRate] -- not because E8 (always

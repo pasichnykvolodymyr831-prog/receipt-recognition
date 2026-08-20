@@ -98,6 +98,15 @@ class TimesheetEngine {
     setCellValue(_sheet, 'C6', TextCellValue(phone));
   }
 
+  /// Rewrites C2 (employee name) and C6 (phone) on an already-existing file
+  /// (Пакет 9: a Settings name/phone change propagates to the current
+  /// period's file immediately). Doesn't touch C5 (period label), unlike
+  /// [writeHeader], which is only ever called once at creation.
+  void updateHeader({required String employeeName, required String phone}) {
+    setCellValue(_sheet, 'C2', TextCellValue(employeeName));
+    setCellValue(_sheet, 'C6', TextCellValue(phone));
+  }
+
   /// Auto-fills every day of the period starting at row 8 (Item# 1), per
   /// section 10: weekends and STAT holidays are left blank; weekdays get
   /// the standard 8am-4:30pm default with a 12:00-12:30 lunch.

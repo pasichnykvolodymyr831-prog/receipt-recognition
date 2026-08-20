@@ -90,6 +90,27 @@ class PeriodFileManager {
     }
   }
 
+  /// Rewrites [period]'s Mileage Report B3 and Timesheet C2/C6 (section 9:
+  /// a Settings employee name/phone change propagates to the current
+  /// period's file immediately) for whichever of the two files already
+  /// exists -- a no-op for a file that hasn't been created yet, since it
+  /// will pick up the current Settings name/phone on its own at creation
+  /// time. Mirrors [writeRateIfFileExists]'s existence-gated pattern.
+  Future<void> writeHeaderIfFilesExist(
+    PayrollPeriod period, {
+    required String employeeName,
+    required String phone,
+  }) async {
+    final mileage = await mileageReportFile(period);
+    if (await mileage.exists()) {
+      await updateMileageEmployeeName(mileage, employeeName: employeeName);
+    }
+    final timesheet = await timesheetFile(period);
+    if (await timesheet.exists()) {
+      await updateTimesheetHeader(timesheet, employeeName: employeeName, phone: phone);
+    }
+  }
+
   /// Creates both files for [period] from the bundled templates if they
   /// don't already exist (section 5). No-op if they're already there.
   ///
@@ -138,6 +159,26 @@ class PeriodFileManager {
     }
   }
 
+  /// Periods (from [allPeriods], excluding [currentPeriod]) that fall
+  /// outside [retention]'s window relative to [now] -- the pure "which
+  /// periods" half of [cleanupAccordingToRetention], split out so the
+  /// Settings screen can show an accurate confirmation count *before* the
+  /// user commits to narrowing the window (section 11, Пакет 9), without
+  /// duplicating the age-check logic.
+  List<PayrollPeriod> periodsOutsideRetention({
+    required List<PayrollPeriod> allPeriods,
+    required PayrollPeriod currentPeriod,
+    required RetentionPolicy retention,
+    required DateTime now,
+  }) {
+    final windowDays = retention.windowDays;
+    return allPeriods.where((period) {
+      if (period.key == currentPeriod.key) return false;
+      final ageDays = now.difference(period.end).inDays;
+      return windowDays == null || ageDays > windowDays;
+    }).toList();
+  }
+
   /// Deletes file pairs for periods outside the retention window relative
   /// to [now], skipping [currentPeriod] entirely (section 11). A `never`
   /// policy (null window) deletes anything that isn't the current period.
@@ -156,14 +197,13 @@ class PeriodFileManager {
     required RetentionPolicy retention,
     required DateTime now,
   }) async {
-    final windowDays = retention.windowDays;
     final dir = await _reportsDir();
-    for (final period in allPeriods) {
-      if (period.key == currentPeriod.key) continue;
-      final ageDays = now.difference(period.end).inDays;
-      final shouldDelete = windowDays == null || ageDays > windowDays;
-      if (!shouldDelete) continue;
-
+    for (final period in periodsOutsideRetention(
+      allPeriods: allPeriods,
+      currentPeriod: currentPeriod,
+      retention: retention,
+      now: now,
+    )) {
       try {
         final mileage = await findPeriodFile(dir, 'MileageReport', period.fileId);
         if (mileage != null) await _deleteWithBackup(mileage);
