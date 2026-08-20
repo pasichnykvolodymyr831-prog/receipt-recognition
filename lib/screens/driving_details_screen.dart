@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../l10n/app_strings.dart';
+import '../models/mileage_cycle.dart';
 import '../models/payroll_period.dart';
 import '../services/period_file_manager.dart';
+import '../services/period_repository.dart';
 import '../services/safe_xlsx_write.dart';
 import '../services/settings_repository.dart';
 import '../utils/number_input.dart';
@@ -37,9 +39,17 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
   String? _tripError;
   String? _kmError;
 
+  /// Resolved once in [initState] and gates the whole screen (not just the
+  /// moment of saving) -- so the user doesn't fill in Trip/KM only to
+  /// discover at Save time that [widget.period] isn't paired into a
+  /// Mileage cycle yet (`MileageCycle`, whimsical-booping-salamander.md
+  /// Пакет 3).
+  late Future<MileageCycle?> _cycleFuture;
+
   @override
   void initState() {
     super.initState();
+    _cycleFuture = _resolveCycle();
     final existing = widget.existing;
     if (existing != null) {
       if (existing.date != null) _date = existing.date!;
@@ -53,6 +63,12 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
     _tripController.dispose();
     _kmController.dispose();
     super.dispose();
+  }
+
+  Future<MileageCycle?> _resolveCycle() async {
+    final periodRepo = PeriodRepository();
+    final periods = await periodRepo.loadAll();
+    return periodRepo.mileageCycleFor(widget.period, periods);
   }
 
   Future<void> _pickDate() async {
@@ -98,13 +114,21 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
       _savePhase = SaveXlsxPhase.reading;
     });
     try {
+      // Already resolved (and non-null -- the screen is gated on it in
+      // build()) by the time Save is reachable; awaiting the same Future
+      // again just returns the cached result, no re-resolve.
+      final cycle = (await _cycleFuture)!;
       final fileManager = PeriodFileManager();
-      final file = await fileManager.mileageReportFile(widget.period);
+      final file = await fileManager.mileageReportFile(cycle);
       final settings = await SettingsRepository().load();
       void onPhase(SaveXlsxPhase phase) {
         if (mounted) setState(() => _savePhase = phase);
       }
 
+      // Section 6.2's priority rule uses the CYCLE's own rate (fixed on its
+      // opening half, see MileageCycle.kmRate), not widget.period.kmRate --
+      // that field is no longer meaningful for Mileage on the second-half
+      // period once a cycle is formed.
       final existing = widget.existing;
       if (existing != null) {
         // Section 14: editing writes back to the same row -- no free-row
@@ -115,7 +139,7 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
           date: _date,
           trip: trip,
           km: km,
-          periodKmRate: widget.period.kmRate,
+          periodKmRate: cycle.kmRate,
           settingsDefaultRate: settings.kmRate,
           onPhase: onPhase,
         );
@@ -125,7 +149,7 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
           date: _date,
           trip: trip,
           km: km,
-          periodKmRate: widget.period.kmRate,
+          periodKmRate: cycle.kmRate,
           settingsDefaultRate: settings.kmRate,
           onPhase: onPhase,
         );
@@ -163,35 +187,55 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
       appBar: AppBar(
         title: Text(t(context, widget.existing != null ? 'drivingDetails.editTitle' : 'drivingDetails.title')),
       ),
-      body: _busy
-          ? _buildSaveProgress(context)
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                ListTile(
-                  title: Text(t(context, 'addReceipt.date')),
-                  subtitle: Text(dateFmt),
-                  trailing: const Icon(Icons.calendar_today),
-                  onTap: _pickDate,
-                ),
-                const Divider(),
-                TextField(
-                  controller: _tripController,
-                  decoration: InputDecoration(labelText: t(context, 'drivingDetails.trip'), errorText: _tripError),
-                  maxLength: 300,
-                  onChanged: (_) => setState(() => _tripError = null),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _kmController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(labelText: t(context, 'drivingDetails.km'), errorText: _kmError),
-                  onChanged: (_) => setState(() => _kmError = null),
-                ),
-                const SizedBox(height: 24),
-                FilledButton(onPressed: _save, child: Text(t(context, 'common.save'))),
-              ],
-            ),
+      body: FutureBuilder<MileageCycle?>(
+        future: _cycleFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text('${t(context, 'home.errorPrefix')} ${snapshot.error}'));
+          }
+          if (snapshot.data == null) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(t(context, 'mileageCycle.notReadyMessage'), textAlign: TextAlign.center),
+              ),
+            );
+          }
+          return _busy
+              ? _buildSaveProgress(context)
+              : ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    ListTile(
+                      title: Text(t(context, 'addReceipt.date')),
+                      subtitle: Text(dateFmt),
+                      trailing: const Icon(Icons.calendar_today),
+                      onTap: _pickDate,
+                    ),
+                    const Divider(),
+                    TextField(
+                      controller: _tripController,
+                      decoration:
+                          InputDecoration(labelText: t(context, 'drivingDetails.trip'), errorText: _tripError),
+                      maxLength: 300,
+                      onChanged: (_) => setState(() => _tripError = null),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _kmController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(labelText: t(context, 'drivingDetails.km'), errorText: _kmError),
+                      onChanged: (_) => setState(() => _kmError = null),
+                    ),
+                    const SizedBox(height: 24),
+                    FilledButton(onPressed: _save, child: Text(t(context, 'common.save'))),
+                  ],
+                );
+        },
+      ),
     );
   }
 

@@ -98,7 +98,25 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _filesExistFuture = PeriodFileManager().filesExist(widget.period);
+    _filesExistFuture = _checkFilesExist();
+  }
+
+  // TODO(whimsical-booping-salamander.md, Пакет 8b): this screen still
+  // treats "files exist" as one combined AND of Mileage+Timesheet, exactly
+  // mirroring the pre-cycle behavior -- correct as a stopgap (Пакет 2), but
+  // not the real per-file-kind story once Mileage is cycle-keyed (a past
+  // period's Timesheet can be gone while its Mileage cycle is still live
+  // for the other half, or vice versa). Пакет 8b replaces this whole
+  // screen with one that shows the 4 Mileage tiles + 2 Timesheet subtiles
+  // independently, per the plan.
+  Future<bool> _checkFilesExist() async {
+    final periodRepo = PeriodRepository();
+    final periods = await periodRepo.loadAll();
+    final cycle = periodRepo.mileageCycleFor(widget.period, periods);
+    final fileManager = PeriodFileManager();
+    final mileageExists = cycle != null && await (await fileManager.mileageReportFile(cycle)).exists();
+    final timesheetExists = await (await fileManager.timesheetFile(widget.period)).exists();
+    return mileageExists && timesheetExists;
   }
 
   @override

@@ -223,7 +223,24 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
               (oldRate != null && newRate != null && !MileageReportEngine.ratesEqual(oldRate, newRate)));
       if (rateChanged) {
         final effectiveRate = newRate ?? (await SettingsRepository().load()).kmRate;
-        await PeriodFileManager().writeRateIfFileExists(period, effectiveRate);
+        // TODO(whimsical-booping-salamander.md, Пакет 5): this still writes
+        // the rate straight into the edited period's Mileage cycle file (if
+        // any) -- the plan's "changes always apply from next cycle only,
+        // with a warning" behavior, and disabling this field for "9-23"
+        // periods, aren't implemented yet.
+        //
+        // Resolves the cycle against widget.existingPeriods with THIS
+        // period's own fresh (possibly just-edited) dates substituted in --
+        // not the stale pre-edit copy that list still carries under the
+        // same key -- so a date edit that changes which half [period] is
+        // (or its pairing) is reflected immediately, not one save behind.
+        final periodsForCycle = [
+          for (final p in widget.existingPeriods)
+            if (p.key != period.key) p,
+          period,
+        ];
+        final cycle = PeriodRepository().mileageCycleFor(period, periodsForCycle);
+        await PeriodFileManager().writeRateIfFileExists(cycle, effectiveRate);
       }
 
       final repo = PeriodRepository();

@@ -10,6 +10,7 @@ import 'package:excel/excel.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
+import 'package:expenseflow/models/mileage_cycle.dart';
 import 'package:expenseflow/models/payroll_period.dart';
 import 'package:expenseflow/services/backup_manager.dart';
 import 'package:expenseflow/services/period_file_manager.dart';
@@ -136,11 +137,28 @@ void main() {
     });
   });
 
-  group('ensureFilesExist (integration, section 5)', () {
+  final firstHalf = PayrollPeriod(
+    key: '2026-07-24_2026-08-08',
+    start: DateTime(2026, 7, 24),
+    end: DateTime(2026, 8, 8),
+    due: DateTime(2026, 8, 6, 16, 30),
+  );
+  final period = PayrollPeriod(
+    key: '2026-08-09_2026-08-23',
+    start: DateTime(2026, 8, 9),
+    end: DateTime(2026, 8, 23),
+    due: DateTime(2026, 8, 21, 16, 30),
+    weekendAltDue: DateTime(2026, 8, 23, 8, 30),
+    statHolidays: const [],
+  );
+  final cycle = MileageCycle(firstHalf: firstHalf, secondHalf: period);
+
+  group('ensureTimesheetFileExists (integration, section 5, Пакет 2 of '
+      'whimsical-booping-salamander.md: split from the old combined ensureFilesExist)', () {
     late Directory docsDir;
 
     setUp(() {
-      docsDir = Directory.systemTemp.createTempSync('period_file_manager_docs');
+      docsDir = Directory.systemTemp.createTempSync('period_file_manager_ts_docs');
       PathProviderPlatform.instance = _FakePathProviderPlatform(docsDir.path);
     });
 
@@ -148,47 +166,182 @@ void main() {
       docsDir.deleteSync(recursive: true);
     });
 
-    final period = PayrollPeriod(
-      key: '2026-08-09_2026-08-23',
-      start: DateTime(2026, 8, 9),
-      end: DateTime(2026, 8, 23),
-      due: DateTime(2026, 8, 21, 16, 30),
-      weekendAltDue: DateTime(2026, 8, 23, 8, 30),
-      statHolidays: const [],
-    );
-
     test('finds and leaves alone a real pre-existing unprefixed file, does not create a duplicate', () async {
       final reportsDir = Directory('${docsDir.path}/reports')..createSync(recursive: true);
-      final realFile = File('${reportsDir.path}/MileageReport_2026-08-09_2026-08-23.xlsx');
-      const marker = [1, 2, 3, 4, 5]; // stand-in for "real user data" -- must survive untouched.
-      realFile.writeAsBytesSync(marker);
       final realTimesheet = File('${reportsDir.path}/Timesheet_2026-08-09_2026-08-23.xlsx');
+      const marker = [1, 2, 3, 4, 5]; // stand-in for "real user data" -- must survive untouched.
       realTimesheet.writeAsBytesSync(marker);
 
-      await PeriodFileManager().ensureFilesExist(
+      await PeriodFileManager().ensureTimesheetFileExists(
         period,
         AppSettings.defaults.copyWith(firstName: 'SomeoneElse'),
       );
 
       final entries = reportsDir.listSync().map((e) => e.uri.pathSegments.last).toList();
-      expect(entries, unorderedEquals(['MileageReport_2026-08-09_2026-08-23.xlsx', 'Timesheet_2026-08-09_2026-08-23.xlsx']),
+      expect(entries, ['Timesheet_2026-08-09_2026-08-23.xlsx'],
           reason: 'a second, prefixed file must not be created alongside the real one');
-      expect(realFile.readAsBytesSync(), marker, reason: 'the real file must be left untouched, not overwritten');
+      expect(realTimesheet.readAsBytesSync(), marker, reason: 'the real file must be left untouched, not overwritten');
     });
 
-    test('creates prefixed files when nothing exists yet', () async {
-      await PeriodFileManager().ensureFilesExist(
+    test('creates a prefixed file when nothing exists yet', () async {
+      await PeriodFileManager().ensureTimesheetFileExists(
         period,
         AppSettings.defaults.copyWith(firstName: 'Truman'),
       );
 
       final reportsDir = Directory('${docsDir.path}/reports');
       final entries = reportsDir.listSync().map((e) => e.uri.pathSegments.last).toList();
-      expect(entries, unorderedEquals(['Truman_MileageReport_2026-08-09_2026-08-23.xlsx', 'Truman_Timesheet_2026-08-09_2026-08-23.xlsx']));
+      expect(entries, ['Truman_Timesheet_2026-08-09_2026-08-23.xlsx']);
     });
   });
 
-  group('writeRateIfFileExists (Пакет 31: shared rate-change file-write step)', () {
+  group('ensureMileageFileExists (integration, section 5/6.2, Пакет 2 of '
+      'whimsical-booping-salamander.md: one file per 4-week Mileage cycle, not per 2-week period)', () {
+    late Directory docsDir;
+
+    setUp(() {
+      docsDir = Directory.systemTemp.createTempSync('period_file_manager_mg_docs');
+      PathProviderPlatform.instance = _FakePathProviderPlatform(docsDir.path);
+    });
+
+    tearDown(() {
+      docsDir.deleteSync(recursive: true);
+    });
+
+    test('finds and leaves alone a real pre-existing unprefixed file, does not create a duplicate', () async {
+      final reportsDir = Directory('${docsDir.path}/reports')..createSync(recursive: true);
+      final realFile = File('${reportsDir.path}/MileageReport_2026-07-24_2026-08-23.xlsx');
+      const marker = [1, 2, 3, 4, 5]; // stand-in for "real user data" -- must survive untouched.
+      realFile.writeAsBytesSync(marker);
+
+      await PeriodFileManager().ensureMileageFileExists(
+        cycle,
+        AppSettings.defaults.copyWith(firstName: 'SomeoneElse'),
+      );
+
+      final entries = reportsDir.listSync().map((e) => e.uri.pathSegments.last).toList();
+      expect(entries, ['MileageReport_2026-07-24_2026-08-23.xlsx'],
+          reason: 'a second, prefixed file must not be created alongside the real one, named by the CYCLE fileId');
+      expect(realFile.readAsBytesSync(), marker, reason: 'the real file must be left untouched, not overwritten');
+    });
+
+    test('creates a prefixed file, named by the cycle fileId (not either half\'s own), when nothing exists yet',
+        () async {
+      await PeriodFileManager().ensureMileageFileExists(
+        cycle,
+        AppSettings.defaults.copyWith(firstName: 'Truman'),
+      );
+
+      final reportsDir = Directory('${docsDir.path}/reports');
+      final entries = reportsDir.listSync().map((e) => e.uri.pathSegments.last).toList();
+      expect(entries, ['Truman_MileageReport_2026-07-24_2026-08-23.xlsx']);
+    });
+
+    test('the Kilometers row date (A8) reflects the END OF THE WHOLE CYCLE, not just the opening half '
+        '(section 6.2/13 п.1а -- regression test for the periodEnd: cycle.end vs firstHalf.end distinction)',
+        () async {
+      await PeriodFileManager().ensureMileageFileExists(cycle, AppSettings.defaults);
+
+      final file = await PeriodFileManager().mileageReportFile(cycle);
+      final excel = Excel.decodeBytes(normalizeXlsxRelationshipTargets(await file.readAsBytes()));
+      final a8 = excel.sheets['Truman Homes']!.cell(CellIndex.indexByString('A8')).value;
+      final date = (a8 as DateCellValue).asDateTimeLocal();
+      expect(DateTime(date.year, date.month, date.day), cycle.end,
+          reason: 'must be secondHalf.end (cycle.end), not firstHalf.end');
+    });
+  });
+
+  group('ensureMileageFileExists legacy migration (whimsical-booping-salamander.md, Пакет 2: a real user '
+      'device has a Mileage file created by a pre-cycle build, keyed by a single PayrollPeriod.fileId)', () {
+    late Directory docsDir;
+    late Directory reportsDir;
+    late Directory backupsDir;
+
+    setUp(() {
+      docsDir = Directory.systemTemp.createTempSync('period_file_manager_migration_docs');
+      PathProviderPlatform.instance = _FakePathProviderPlatform(docsDir.path);
+      reportsDir = Directory('${docsDir.path}/reports')..createSync(recursive: true);
+      backupsDir = Directory('${docsDir.path}/backups')..createSync(recursive: true);
+    });
+
+    tearDown(() {
+      docsDir.deleteSync(recursive: true);
+    });
+
+    test('renames a legacy file keyed by the SECOND half\'s own fileId to the cycle fileId, preserving its bytes',
+        () async {
+      final legacy = File('${reportsDir.path}/Truman_MileageReport_${period.fileId}.xlsx');
+      const realData = [9, 9, 9, 9]; // stand-in for a real receipt/trip the user already entered.
+      legacy.writeAsBytesSync(realData);
+
+      await PeriodFileManager().ensureMileageFileExists(cycle, AppSettings.defaults.copyWith(firstName: 'Truman'));
+
+      final entries = reportsDir.listSync().map((e) => e.uri.pathSegments.last).toList();
+      expect(entries, ['Truman_MileageReport_${cycle.fileId}.xlsx'],
+          reason: 'the legacy file must be renamed in place, not left behind alongside a fresh blank one');
+      expect(File('${reportsDir.path}/Truman_MileageReport_${cycle.fileId}.xlsx').readAsBytesSync(), realData,
+          reason: 'the real data must survive the rename byte-for-byte');
+    });
+
+    // AppSettings.defaults.firstName is 'Truman' (the app's real shipped
+    // default, per section 5) -- these tests use an explicit empty
+    // firstName wherever an unprefixed filename is expected, rather than
+    // relying on AppSettings.defaults to mean "no prefix".
+    final noPrefix = AppSettings.defaults.copyWith(firstName: '');
+
+    test('renames a legacy file keyed by the FIRST half\'s own fileId to the cycle fileId', () async {
+      final legacy = File('${reportsDir.path}/MileageReport_${firstHalf.fileId}.xlsx');
+      const realData = [7, 7, 7];
+      legacy.writeAsBytesSync(realData);
+
+      await PeriodFileManager().ensureMileageFileExists(cycle, noPrefix);
+
+      final entries = reportsDir.listSync().map((e) => e.uri.pathSegments.last).toList();
+      expect(entries, ['MileageReport_${cycle.fileId}.xlsx']);
+      expect(File('${reportsDir.path}/MileageReport_${cycle.fileId}.xlsx').readAsBytesSync(), realData);
+    });
+
+    test('migrates the file\'s .bak alongside it, so the next write does not orphan a stale backup', () async {
+      File('${reportsDir.path}/Truman_MileageReport_${period.fileId}.xlsx').writeAsBytesSync([1, 2, 3]);
+      final legacyBackup = File('${backupsDir.path}/Truman_MileageReport_${period.fileId}.xlsx.bak')
+        ..writeAsBytesSync([4, 5, 6]);
+
+      await PeriodFileManager().ensureMileageFileExists(cycle, AppSettings.defaults.copyWith(firstName: 'Truman'));
+
+      expect(legacyBackup.existsSync(), false);
+      expect(File('${backupsDir.path}/Truman_MileageReport_${cycle.fileId}.xlsx.bak').readAsBytesSync(), [4, 5, 6]);
+    });
+
+    test('a legacy file with no backup on disk is still migrated cleanly (backup migration is best-effort)',
+        () async {
+      File('${reportsDir.path}/MileageReport_${period.fileId}.xlsx').writeAsBytesSync([1]);
+
+      await PeriodFileManager().ensureMileageFileExists(cycle, noPrefix);
+
+      expect(File('${reportsDir.path}/MileageReport_${cycle.fileId}.xlsx').existsSync(), true);
+    });
+
+    test('throws PeriodFileAmbiguousException when BOTH halves independently have their own legacy file -- '
+        'never guesses which real data to keep', () async {
+      File('${reportsDir.path}/MileageReport_${firstHalf.fileId}.xlsx').writeAsBytesSync([1]);
+      File('${reportsDir.path}/MileageReport_${period.fileId}.xlsx').writeAsBytesSync([2]);
+
+      expect(
+        () => PeriodFileManager().ensureMileageFileExists(cycle, noPrefix),
+        throwsA(isA<PeriodFileAmbiguousException>()),
+      );
+    });
+
+    test('no migration happens (creates fresh) when no legacy file exists under either half\'s fileId', () async {
+      await PeriodFileManager().ensureMileageFileExists(cycle, noPrefix);
+
+      final entries = reportsDir.listSync().map((e) => e.uri.pathSegments.last).toList();
+      expect(entries, ['MileageReport_${cycle.fileId}.xlsx']);
+    });
+  });
+
+  group('writeRateIfFileExists (Пакет 31: shared rate-change file-write step; '
+      'takes a MileageCycle as of Пакет 2 of whimsical-booping-salamander.md)', () {
     late Directory docsDir;
 
     setUp(() {
@@ -200,36 +353,34 @@ void main() {
       docsDir.deleteSync(recursive: true);
     });
 
-    final period = PayrollPeriod(
-      key: '2026-08-09_2026-08-23',
-      start: DateTime(2026, 8, 9),
-      end: DateTime(2026, 8, 23),
-      due: DateTime(2026, 8, 21, 16, 30),
-      weekendAltDue: DateTime(2026, 8, 23, 8, 30),
-      statHolidays: const [],
-    );
-
     test('writes the new rate to G1 when the file already exists', () async {
-      await PeriodFileManager().ensureFilesExist(period, AppSettings.defaults.copyWith(kmRate: 0.56));
+      await PeriodFileManager().ensureMileageFileExists(cycle, AppSettings.defaults.copyWith(kmRate: 0.56));
 
-      await PeriodFileManager().writeRateIfFileExists(period, 0.60);
+      await PeriodFileManager().writeRateIfFileExists(cycle, 0.60);
 
-      final file = await PeriodFileManager().mileageReportFile(period);
+      final file = await PeriodFileManager().mileageReportFile(cycle);
       final excel = Excel.decodeBytes(normalizeXlsxRelationshipTargets(await file.readAsBytes()));
       final g1 = excel.sheets['Driving Details']!.cell(CellIndex.indexByString('G1')).value;
       expect((g1 as DoubleCellValue).value, closeTo(0.60, 1e-9));
     });
 
-    test('is a no-op when the file does not exist yet (period not created)', () async {
-      // No ensureFilesExist call -- the file genuinely does not exist.
-      await PeriodFileManager().writeRateIfFileExists(period, 0.60);
+    test('is a no-op when the file does not exist yet (cycle not created)', () async {
+      // No ensureMileageFileExists call -- the file genuinely does not exist.
+      await PeriodFileManager().writeRateIfFileExists(cycle, 0.60);
 
-      final file = await PeriodFileManager().mileageReportFile(period);
+      final file = await PeriodFileManager().mileageReportFile(cycle);
       expect(await file.exists(), false, reason: 'must not create the file as a side effect');
+    });
+
+    test('is a no-op when the cycle is null (period not yet paired)', () async {
+      await PeriodFileManager().writeRateIfFileExists(null, 0.60);
+      // Nothing to assert on disk -- the point is this simply doesn't
+      // throw and doesn't touch anything, with no file resolvable at all.
     });
   });
 
-  group('writeHeaderIfFilesExist (Пакет 9: Settings name/phone propagation)', () {
+  group('writeHeaderIfFilesExist (Пакет 9: Settings name/phone propagation; '
+      'takes an optional MileageCycle as of Пакет 2 of whimsical-booping-salamander.md)', () {
     late Directory docsDir;
 
     setUp(() {
@@ -241,22 +392,14 @@ void main() {
       docsDir.deleteSync(recursive: true);
     });
 
-    final period = PayrollPeriod(
-      key: '2026-08-09_2026-08-23',
-      start: DateTime(2026, 8, 9),
-      end: DateTime(2026, 8, 23),
-      due: DateTime(2026, 8, 21, 16, 30),
-      weekendAltDue: DateTime(2026, 8, 23, 8, 30),
-      statHolidays: const [],
-    );
-
     test('writes B3/C2/C6 to both files when they already exist', () async {
-      await PeriodFileManager().ensureFilesExist(period, AppSettings.defaults);
+      await PeriodFileManager().ensureTimesheetFileExists(period, AppSettings.defaults);
+      await PeriodFileManager().ensureMileageFileExists(cycle, AppSettings.defaults);
 
       await PeriodFileManager()
-          .writeHeaderIfFilesExist(period, employeeName: 'New Name', phone: '555-1234');
+          .writeHeaderIfFilesExist(period, cycle: cycle, employeeName: 'New Name', phone: '555-1234');
 
-      final mileageFile = await PeriodFileManager().mileageReportFile(period);
+      final mileageFile = await PeriodFileManager().mileageReportFile(cycle);
       final mileage = Excel.decodeBytes(normalizeXlsxRelationshipTargets(await mileageFile.readAsBytes()));
       expect(mileage.sheets['Truman Homes']!.cell(CellIndex.indexByString('B3')).value.toString(),
           contains('New Name'));
@@ -270,24 +413,37 @@ void main() {
     });
 
     test('does not touch the period label (M3/C5) -- only the name/phone cells', () async {
-      await PeriodFileManager().ensureFilesExist(period, AppSettings.defaults);
-      final mileageFile = await PeriodFileManager().mileageReportFile(period);
+      await PeriodFileManager().ensureMileageFileExists(cycle, AppSettings.defaults);
+      final mileageFile = await PeriodFileManager().mileageReportFile(cycle);
       final before = Excel.decodeBytes(normalizeXlsxRelationshipTargets(await mileageFile.readAsBytes()));
       final labelBefore = before.sheets['Truman Homes']!.cell(CellIndex.indexByString('M3')).value.toString();
 
-      await PeriodFileManager().writeHeaderIfFilesExist(period, employeeName: 'New Name', phone: '555-1234');
+      await PeriodFileManager()
+          .writeHeaderIfFilesExist(period, cycle: cycle, employeeName: 'New Name', phone: '555-1234');
 
       final after = Excel.decodeBytes(normalizeXlsxRelationshipTargets(await mileageFile.readAsBytes()));
       expect(after.sheets['Truman Homes']!.cell(CellIndex.indexByString('M3')).value.toString(), labelBefore);
     });
 
-    test('is a no-op when neither file exists yet (period not created)', () async {
-      await PeriodFileManager().writeHeaderIfFilesExist(period, employeeName: 'New Name', phone: '555-1234');
+    test('is a no-op when neither file exists yet (period/cycle not created)', () async {
+      await PeriodFileManager()
+          .writeHeaderIfFilesExist(period, cycle: cycle, employeeName: 'New Name', phone: '555-1234');
 
-      final mileageFile = await PeriodFileManager().mileageReportFile(period);
+      final mileageFile = await PeriodFileManager().mileageReportFile(cycle);
       final timesheetFile = await PeriodFileManager().timesheetFile(period);
       expect(await mileageFile.exists(), false, reason: 'must not create the file as a side effect');
       expect(await timesheetFile.exists(), false, reason: 'must not create the file as a side effect');
+    });
+
+    test('touches only the Timesheet file when cycle is null (period not yet paired)', () async {
+      await PeriodFileManager().ensureTimesheetFileExists(period, AppSettings.defaults);
+
+      await PeriodFileManager().writeHeaderIfFilesExist(period, employeeName: 'New Name', phone: '555-1234');
+
+      final timesheetFile = await PeriodFileManager().timesheetFile(period);
+      final timesheet = Excel.decodeBytes(normalizeXlsxRelationshipTargets(await timesheetFile.readAsBytes()));
+      expect(timesheet.sheets['Sheet1']!.cell(CellIndex.indexByString('C2')).value.toString(),
+          contains('New Name'));
     });
   });
 

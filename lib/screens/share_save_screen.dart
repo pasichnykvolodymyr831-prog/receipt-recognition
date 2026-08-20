@@ -5,14 +5,22 @@ import 'package:flutter_file_dialog/flutter_file_dialog.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../l10n/app_strings.dart';
+import '../models/mileage_cycle.dart';
 import '../models/payroll_period.dart';
 import '../services/period_file_manager.dart';
+import '../services/period_repository.dart';
 
 enum _FileChoice { mileage, timesheet, both }
 
 /// Share / Save (section 12): send the period's Excel file(s) through the
 /// system share sheet, or save them to the device via the native SAF save
 /// dialog. No photos are ever included -- only the xlsx files.
+///
+/// Mileage and Timesheet are checked independently (whimsical-booping-
+/// salamander.md, Пакет 4): accounting only accepts Mileage Report every 4
+/// weeks, so it's an entirely normal, non-error state for Timesheet to be
+/// ready while [widget.period]'s Mileage cycle either hasn't formed yet or
+/// hasn't been created yet.
 class ShareSaveScreen extends StatefulWidget {
   final PayrollPeriod period;
 
@@ -23,31 +31,44 @@ class ShareSaveScreen extends StatefulWidget {
 }
 
 class _ShareSaveScreenState extends State<ShareSaveScreen> {
-  _FileChoice _choice = _FileChoice.both;
+  _FileChoice? _choice;
   bool _busy = false;
-  late Future<bool> _filesExistFuture;
+  late Future<MileageCycle?> _cycleFuture;
+  late Future<bool> _mileageExistsFuture;
+  late Future<bool> _timesheetExistsFuture;
 
   @override
   void initState() {
     super.initState();
     // Section 12/14: reached normally only through an enabled
-    // PeriodActionTiles tile, which already implies files exist -- this is
-    // the defensive "refuse on entry with an explanation" backstop the
-    // plan calls for, for any other path that might reach this screen
-    // (Пакет 10).
-    _filesExistFuture = PeriodFileManager().filesExist(widget.period);
+    // PeriodActionTiles tile -- this is the defensive "refuse on entry with
+    // an explanation" backstop the plan calls for, for any other path that
+    // might reach this screen (Пакет 10).
+    _cycleFuture = _resolveCycle();
+    _mileageExistsFuture = _cycleFuture.then((cycle) async {
+      if (cycle == null) return false;
+      return (await PeriodFileManager().mileageReportFile(cycle)).exists();
+    });
+    _timesheetExistsFuture = PeriodFileManager().timesheetFile(widget.period).then((f) => f.exists());
+  }
+
+  Future<MileageCycle?> _resolveCycle() async {
+    final periodRepo = PeriodRepository();
+    final periods = await periodRepo.loadAll();
+    return periodRepo.mileageCycleFor(widget.period, periods);
   }
 
   Future<List<File>> _selectedFiles() async {
     final fileManager = PeriodFileManager();
-    switch (_choice) {
+    final cycle = await _cycleFuture;
+    switch (_choice!) {
       case _FileChoice.mileage:
-        return [await fileManager.mileageReportFile(widget.period)];
+        return [await fileManager.mileageReportFile(cycle!)];
       case _FileChoice.timesheet:
         return [await fileManager.timesheetFile(widget.period)];
       case _FileChoice.both:
         return [
-          await fileManager.mileageReportFile(widget.period),
+          await fileManager.mileageReportFile(cycle!),
           await fileManager.timesheetFile(widget.period),
         ];
     }
@@ -96,8 +117,8 @@ class _ShareSaveScreenState extends State<ShareSaveScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(t(context, 'shareSave.title'))),
-      body: FutureBuilder<bool>(
-        future: _filesExistFuture,
+      body: FutureBuilder<List<bool>>(
+        future: Future.wait([_mileageExistsFuture, _timesheetExistsFuture]),
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
@@ -109,7 +130,9 @@ class _ShareSaveScreenState extends State<ShareSaveScreen> {
           if (snapshot.hasError) {
             return Center(child: Text('${t(context, 'home.errorPrefix')} ${snapshot.error}'));
           }
-          if (snapshot.data != true) {
+          final mileageExists = snapshot.data![0];
+          final timesheetExists = snapshot.data![1];
+          if (!mileageExists && !timesheetExists) {
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -117,32 +140,44 @@ class _ShareSaveScreenState extends State<ShareSaveScreen> {
               ),
             );
           }
-          return _buildContent(context);
+          return _buildContent(context, mileageExists: mileageExists, timesheetExists: timesheetExists);
         },
       ),
     );
   }
 
-  Widget _buildContent(BuildContext context) {
+  Widget _buildContent(BuildContext context, {required bool mileageExists, required bool timesheetExists}) {
+    // Default to whichever single choice is actually available when only
+    // one of the two exists -- "Both" would otherwise be pre-selected but
+    // disabled, an unusable initial state.
+    _choice ??= mileageExists && timesheetExists
+        ? _FileChoice.both
+        : (mileageExists ? _FileChoice.mileage : _FileChoice.timesheet);
+
     return _busy
         ? const Center(child: CircularProgressIndicator())
         : RadioGroup<_FileChoice>(
             groupValue: _choice,
-            onChanged: (v) => setState(() => _choice = v!),
+            onChanged: (v) => setState(() => _choice = v),
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
                 RadioListTile<_FileChoice>(
                   title: Text(t(context, 'shareSave.mileageReport')),
+                  subtitle: mileageExists ? null : Text(t(context, 'mileageCycle.notReadyMessage')),
                   value: _FileChoice.mileage,
+                  enabled: mileageExists,
                 ),
                 RadioListTile<_FileChoice>(
                   title: Text(t(context, 'shareSave.timesheet')),
+                  subtitle: timesheetExists ? null : Text(t(context, 'periodActions.filesUnavailable')),
                   value: _FileChoice.timesheet,
+                  enabled: timesheetExists,
                 ),
                 RadioListTile<_FileChoice>(
                   title: Text(t(context, 'shareSave.bothFiles')),
                   value: _FileChoice.both,
+                  enabled: mileageExists && timesheetExists,
                 ),
                 const SizedBox(height: 24),
                 FilledButton.icon(

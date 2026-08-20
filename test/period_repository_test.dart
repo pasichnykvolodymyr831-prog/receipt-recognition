@@ -3,11 +3,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:expenseflow/models/payroll_period.dart';
 import 'package:expenseflow/services/period_repository.dart';
 
-PayrollPeriod _period(String start, String end) => PayrollPeriod(
+PayrollPeriod _period(String start, String end, {double? kmRate}) => PayrollPeriod(
       key: '$start-$end',
       start: DateTime.parse(start),
       end: DateTime.parse(end),
       due: DateTime.parse(end),
+      kmRate: kmRate,
     );
 
 void main() {
@@ -136,6 +137,96 @@ void main() {
       final future = _period('2026-08-24', '2026-09-08');
 
       expect(repo.pastPeriods([current, future], current), isEmpty);
+    });
+  });
+
+  group('mileageCycles / mileageCycleFor (Пакет 1 of the 4-week Mileage-cycle plan, '
+      'whimsical-booping-salamander.md: pairing consecutive periods into one Mileage cycle)', () {
+    test('pairs a "24-8" period with the very next "9-23" period', () {
+      final repo = PeriodRepository();
+      final first = _period('2026-07-24', '2026-08-08', kmRate: 0.6);
+      final second = _period('2026-08-09', '2026-08-23');
+
+      final cycles = repo.mileageCycles([first, second]);
+
+      expect(cycles, hasLength(1));
+      expect(cycles.single.firstHalf, first);
+      expect(cycles.single.secondHalf, second);
+      expect(cycles.single.start, DateTime(2026, 7, 24));
+      expect(cycles.single.end, DateTime(2026, 8, 23));
+      expect(cycles.single.due, second.due);
+      expect(cycles.single.fileId, '2026-07-24_2026-08-23');
+      expect(cycles.single.kmRate, 0.6, reason: 'the cycle rate lives on the opening (firstHalf) period');
+    });
+
+    test('pairs correctly across a month/year boundary (December -> January)', () {
+      final repo = PeriodRepository();
+      final first = _period('2026-12-24', '2027-01-08');
+      final second = _period('2027-01-09', '2027-01-23');
+
+      final cycles = repo.mileageCycles([first, second]);
+
+      expect(cycles, hasLength(1));
+      expect(cycles.single.end, DateTime(2027, 1, 23));
+    });
+
+    test('the real orphaned case from the seed data: the very first period (2026-03-09..23) '
+        'has no preceding "24-8" half and forms no cycle', () {
+      final repo = PeriodRepository();
+      final onlyPeriod = _period('2026-03-09', '2026-03-23');
+
+      expect(repo.mileageCycles([onlyPeriod]), isEmpty);
+      expect(repo.mileageCycleFor(onlyPeriod, [onlyPeriod]), isNull);
+    });
+
+    test('a "24-8" period whose "9-23" partner hasn\'t been added yet forms no cycle', () {
+      final repo = PeriodRepository();
+      final opening = _period('2026-07-24', '2026-08-08');
+
+      expect(repo.mileageCycles([opening]), isEmpty);
+      expect(repo.mileageCycleFor(opening, [opening]), isNull);
+    });
+
+    test('a gap between two otherwise correctly-shaped periods does NOT pair them '
+        '(regression test: adjacency is checked by actual date, not merely "next in the sorted list")', () {
+      final repo = PeriodRepository();
+      final opening = _period('2026-07-24', '2026-08-08');
+      // Missing 2026-08-09..23 entirely -- next entry in start order is the
+      // FOLLOWING cycle's opening half, not a genuine "9-23" second half.
+      final unrelatedLater = _period('2026-09-24', '2026-10-08');
+
+      final cycles = repo.mileageCycles([opening, unrelatedLater]);
+
+      expect(cycles, isEmpty);
+    });
+
+    test('mileageCycleFor resolves via either half of the pair', () {
+      final repo = PeriodRepository();
+      final first = _period('2026-07-24', '2026-08-08');
+      final second = _period('2026-08-09', '2026-08-23');
+      final periods = [first, second];
+
+      final viaFirst = repo.mileageCycleFor(first, periods);
+      final viaSecond = repo.mileageCycleFor(second, periods);
+
+      expect(viaFirst, isNotNull);
+      expect(viaSecond, isNotNull);
+      expect(viaFirst!.fileId, viaSecond!.fileId);
+    });
+
+    test('multiple cycles in a longer list are all found, sorted input not required', () {
+      final repo = PeriodRepository();
+      final aFirst = _period('2026-06-24', '2026-07-08');
+      final aSecond = _period('2026-07-09', '2026-07-23');
+      final bFirst = _period('2026-07-24', '2026-08-08');
+      final bSecond = _period('2026-08-09', '2026-08-23');
+
+      // Deliberately shuffled -- mileageCycles must sort internally.
+      final cycles = repo.mileageCycles([bSecond, aFirst, bFirst, aSecond]);
+
+      expect(cycles, hasLength(2));
+      expect(cycles[0].fileId, '2026-06-24_2026-07-23');
+      expect(cycles[1].fileId, '2026-07-24_2026-08-23');
     });
   });
 

@@ -19,6 +19,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 import 'package:expenseflow/l10n/locale_controller.dart';
+import 'package:expenseflow/models/mileage_cycle.dart';
 import 'package:expenseflow/models/payroll_period.dart';
 import 'package:expenseflow/screens/period_archive_screen.dart';
 import 'package:expenseflow/services/period_file_manager.dart';
@@ -55,6 +56,18 @@ void main() {
     end: DateTime(2026, 7, 23),
     due: DateTime(2026, 7, 21),
   );
+  // pastWithFiles + current genuinely pair into a Mileage cycle (Aug 9 is
+  // exactly the day after pastWithFiles ends) -- used below to create the
+  // Mileage file under its real cycle-keyed fileId. pastNoFilesPartner
+  // exists only so pastNoFiles also has a real cycle to resolve, needed for
+  // the ambiguous-file test below (an orphaned period has no Mileage file
+  // check to be ambiguous about at all).
+  final pastNoFilesPartner = PayrollPeriod(
+    key: 'past-no-files-partner',
+    start: DateTime(2026, 6, 24),
+    end: DateTime(2026, 7, 8),
+    due: DateTime(2026, 7, 6),
+  );
 
   Widget wrap() {
     return AppLocale(
@@ -80,7 +93,11 @@ void main() {
       }));
       // Only pastWithFiles actually gets real files on disk -- pastNoFiles
       // is exactly the "retention already cleaned it up" scenario.
-      await PeriodFileManager().ensureFilesExist(pastWithFiles, AppSettings.defaults);
+      // pastWithFiles + current form a real Mileage cycle (see fixtures
+      // above).
+      await PeriodFileManager().ensureTimesheetFileExists(pastWithFiles, AppSettings.defaults);
+      await PeriodFileManager()
+          .ensureMileageFileExists(MileageCycle(firstHalf: pastWithFiles, secondHalf: current), AppSettings.defaults);
 
       await tester.pumpWidget(wrap());
       for (var i = 0; i < 5; i++) {
@@ -131,15 +148,18 @@ void main() {
     await tester.runAsync(() async {
       final periodsFile = File('${docsDir.path}/payroll_periods.json');
       await periodsFile.writeAsString(jsonEncode({
-        'periods': [current.toJson(), pastNoFiles.toJson()],
+        'periods': [current.toJson(), pastNoFiles.toJson(), pastNoFilesPartner.toJson()],
       }));
-      // Two candidate Mileage Report files for the same period -- exactly
-      // the PeriodFileAmbiguousException scenario PeriodFileManager.
-      // filesExist can throw (e.g. a leftover unprefixed file alongside a
-      // newly-prefixed one after a Settings name change).
+      // Two candidate Mileage Report files for the same cycle -- exactly
+      // the PeriodFileAmbiguousException scenario the Mileage-file
+      // existence check can throw (e.g. a leftover unprefixed file
+      // alongside a newly-prefixed one after a Settings name change). Keyed
+      // by the CYCLE's fileId (pastNoFilesPartner + pastNoFiles), not
+      // pastNoFiles' own -- Mileage files are cycle-keyed now.
+      final cycle = MileageCycle(firstHalf: pastNoFilesPartner, secondHalf: pastNoFiles);
       final reportsDir = Directory('${docsDir.path}/reports')..createSync(recursive: true);
-      File('${reportsDir.path}/MileageReport_${pastNoFiles.fileId}.xlsx').createSync();
-      File('${reportsDir.path}/Prefix_MileageReport_${pastNoFiles.fileId}.xlsx').createSync();
+      File('${reportsDir.path}/MileageReport_${cycle.fileId}.xlsx').createSync();
+      File('${reportsDir.path}/Prefix_MileageReport_${cycle.fileId}.xlsx').createSync();
 
       await tester.pumpWidget(wrap());
       for (var i = 0; i < 5; i++) {
@@ -165,7 +185,9 @@ void main() {
       await periodsFile.writeAsString(jsonEncode({
         'periods': [current.toJson(), pastWithFiles.toJson()],
       }));
-      await PeriodFileManager().ensureFilesExist(pastWithFiles, AppSettings.defaults);
+      await PeriodFileManager().ensureTimesheetFileExists(pastWithFiles, AppSettings.defaults);
+      await PeriodFileManager()
+          .ensureMileageFileExists(MileageCycle(firstHalf: pastWithFiles, secondHalf: current), AppSettings.defaults);
 
       await tester.pumpWidget(wrap());
       for (var i = 0; i < 5; i++) {

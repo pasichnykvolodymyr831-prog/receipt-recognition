@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
+import '../models/mileage_cycle.dart';
 import '../models/payroll_period.dart';
 import 'backup_manager.dart';
 import 'safe_xlsx_write.dart';
@@ -10,6 +11,14 @@ import 'settings_repository.dart';
 String periodLabel(PayrollPeriod period) {
   String fmt(DateTime d) => '${_month(d.month)} ${d.day}';
   return '${fmt(period.start)} - ${fmt(period.end)}, ${period.end.year}';
+}
+
+/// Same shape as [periodLabel], for a [MileageCycle] spanning both its
+/// halves -- the Mileage Report's own period-label cell now covers the
+/// whole 4-week cycle (section 6.2/13 п.1а), not just one 2-week period.
+String cycleLabel(MileageCycle cycle) {
+  String fmt(DateTime d) => '${_month(d.month)} ${d.day}';
+  return '${fmt(cycle.start)} - ${fmt(cycle.end)}, ${cycle.end.year}';
 }
 
 const _months = [
@@ -31,12 +40,15 @@ class PeriodFileAmbiguousException implements Exception {
       'PeriodFileAmbiguousException: multiple $kind files found for this period: ${candidateNames.join(", ")}';
 }
 
-/// Creates, locates, and cleans up the per-period xlsx files (section 5)
-/// in a flat `reports/` folder under the app's documents directory. File
-/// names already encode the period range, so no per-period subfolder is
-/// needed: `<prefix_>MileageReport_<start>_<end>.xlsx`,
-/// `<prefix_>Timesheet_<start>_<end>.xlsx`, where `<prefix_>` is the
-/// sanitized Settings first name at the time of creation, or nothing.
+/// Creates, locates, and cleans up the per-period/per-cycle xlsx files
+/// (section 5) in a flat `reports/` folder under the app's documents
+/// directory. File names already encode the period/cycle range, so no
+/// per-period subfolder is needed:
+/// `<prefix_>MileageReport_<cycleStart>_<cycleEnd>.xlsx` (one file per
+/// 4-week Mileage cycle -- accounting only accepts Mileage Report every 4
+/// weeks, see `MileageCycle`), `<prefix_>Timesheet_<start>_<end>.xlsx` (one
+/// file per 2-week period, unchanged), where `<prefix_>` is the sanitized
+/// Settings first name at the time of creation, or nothing.
 class PeriodFileManager {
   PeriodFileManager({BackupManager? backupManager}) : _backupManager = backupManager ?? BackupManager();
 
@@ -51,10 +63,10 @@ class PeriodFileManager {
     return reports;
   }
 
-  Future<File> mileageReportFile(PayrollPeriod period) async {
+  Future<File> mileageReportFile(MileageCycle cycle) async {
     final dir = await _reportsDir();
-    final existing = await findPeriodFile(dir, 'MileageReport', period.fileId);
-    return existing ?? File('${dir.path}/MileageReport_${period.fileId}.xlsx');
+    final existing = await findPeriodFile(dir, 'MileageReport', cycle.fileId);
+    return existing ?? File('${dir.path}/MileageReport_${cycle.fileId}.xlsx');
   }
 
   Future<File> timesheetFile(PayrollPeriod period) async {
@@ -63,17 +75,12 @@ class PeriodFileManager {
     return existing ?? File('${dir.path}/Timesheet_${period.fileId}.xlsx');
   }
 
-  Future<bool> filesExist(PayrollPeriod period) async {
-    final mileage = await mileageReportFile(period);
-    final timesheet = await timesheetFile(period);
-    return await mileage.exists() && await timesheet.exists();
-  }
-
-  /// Writes [newRate] to [period]'s Mileage Report file (`G1` + Kilometers
-  /// row Travel, via `changeMileagePeriodRate`) if that file already
-  /// exists -- a no-op otherwise, since a period whose file hasn't been
-  /// created yet will pick up the new rate on its own at creation time
-  /// (section 6.2's resolve-rate priority rule already handles that case).
+  /// Writes [newRate] to [cycle]'s Mileage Report file (`G1` + Kilometers
+  /// row Travel, via `changeMileagePeriodRate`) if [cycle] is known and
+  /// that file already exists -- a no-op otherwise, since a cycle that
+  /// hasn't formed yet (or whose file hasn't been created yet) will pick up
+  /// the new rate on its own at creation time (section 6.2's resolve-rate
+  /// priority rule already handles that case).
   ///
   /// Both rate-change UI paths (Settings default change, the period form's
   /// own rate field) share this exact step -- previously each screen
@@ -83,27 +90,31 @@ class PeriodFileManager {
   /// **after** this returns successfully, never before (section 6.2:
   /// "никогда только одно из двух" -- the file must never fail to update
   /// while `period.kmRate` already claims the new value).
-  Future<void> writeRateIfFileExists(PayrollPeriod period, double newRate) async {
-    final file = await mileageReportFile(period);
+  Future<void> writeRateIfFileExists(MileageCycle? cycle, double newRate) async {
+    if (cycle == null) return;
+    final file = await mileageReportFile(cycle);
     if (await file.exists()) {
       await changeMileagePeriodRate(file, newRate: newRate);
     }
   }
 
-  /// Rewrites [period]'s Mileage Report B3 and Timesheet C2/C6 (section 9:
-  /// a Settings employee name/phone change propagates to the current
-  /// period's file immediately) for whichever of the two files already
-  /// exists -- a no-op for a file that hasn't been created yet, since it
-  /// will pick up the current Settings name/phone on its own at creation
-  /// time. Mirrors [writeRateIfFileExists]'s existence-gated pattern.
+  /// Rewrites [period]'s Timesheet C2/C6, and (when [cycle] is known) its
+  /// Mileage cycle's B3 (section 9: a Settings employee name/phone change
+  /// propagates to the current period's file immediately) -- a no-op for a
+  /// file that hasn't been created yet, since it will pick up the current
+  /// Settings name/phone on its own at creation time. Mirrors
+  /// [writeRateIfFileExists]'s existence-gated pattern.
   Future<void> writeHeaderIfFilesExist(
     PayrollPeriod period, {
+    MileageCycle? cycle,
     required String employeeName,
     required String phone,
   }) async {
-    final mileage = await mileageReportFile(period);
-    if (await mileage.exists()) {
-      await updateMileageEmployeeName(mileage, employeeName: employeeName);
+    if (cycle != null) {
+      final mileage = await mileageReportFile(cycle);
+      if (await mileage.exists()) {
+        await updateMileageEmployeeName(mileage, employeeName: employeeName);
+      }
     }
     final timesheet = await timesheetFile(period);
     if (await timesheet.exists()) {
@@ -111,18 +122,9 @@ class PeriodFileManager {
     }
   }
 
-  /// Creates both files for [period] from the bundled templates if they
-  /// don't already exist (section 5). No-op if they're already there.
-  ///
-  /// This is the one time the Mileage Report's 5 hidden sheets get healed
-  /// (see [createMileagePeriod]) -- they're copied verbatim from the
-  /// template right here, so healing them now, once, is enough; every
-  /// later write (add receipt/trip/timesheet edit) only heals the visible
-  /// sheets, since re-healing potentially large hidden sheets on every
-  /// single write was measured to dominate save latency on a real device.
-  /// Both files are built inside a spawned isolate (see safe_xlsx_write.dart)
-  /// so this doesn't block the UI isolate at app startup either.
-  Future<void> ensureFilesExist(PayrollPeriod period, AppSettings settings) async {
+  /// Creates [period]'s Timesheet file from the bundled template if it
+  /// doesn't already exist (section 5). No-op if it's already there.
+  Future<void> ensureTimesheetFileExists(PayrollPeriod period, AppSettings settings) async {
     final dir = await _reportsDir();
     final prefix = sanitizedFilenamePrefix(settings.firstName);
     final namePrefix = prefix.isEmpty ? '' : '${prefix}_';
@@ -130,22 +132,8 @@ class PeriodFileManager {
     // Section 5: search first (prefix-agnostic) -- an already-existing file,
     // prefixed or not, must be found and left alone. Only when nothing at
     // all matches do we create a new one, named with *today's* Settings
-    // first name (not the combined fullName used for the in-file B3/C2
-    // cells -- the filename prefix and the in-file name are separate uses).
-    final existingMileage = await findPeriodFile(dir, 'MileageReport', period.fileId);
-    if (existingMileage == null) {
-      final mileageFile = File('${dir.path}/${namePrefix}MileageReport_${period.fileId}.xlsx');
-      await createMileagePeriod(
-        mileageFile,
-        periodLabel: periodLabel(period),
-        employeeName: settings.fullName,
-        periodEnd: period.end,
-        // Section 6.2, case 1 (file doesn't exist yet): period.kmRate, or
-        // the Settings default if this period has none of its own.
-        kmRate: period.kmRate ?? settings.kmRate,
-      );
-    }
-
+    // first name (not the combined fullName used for the in-file C2 cell --
+    // the filename prefix and the in-file name are separate uses).
     final existingTimesheet = await findPeriodFile(dir, 'Timesheet', period.fileId);
     if (existingTimesheet == null) {
       final timesheetFileHandle = File('${dir.path}/${namePrefix}Timesheet_${period.fileId}.xlsx');
@@ -157,6 +145,82 @@ class PeriodFileManager {
         period: period,
       );
     }
+  }
+
+  /// Creates [cycle]'s Mileage Report file from the bundled template if it
+  /// doesn't already exist (accounting accepts Mileage Report only every 4
+  /// weeks -- one file per cycle, not per 2-week period). No-op if it's
+  /// already there.
+  ///
+  /// This is the one time the Mileage Report's 5 hidden sheets get healed
+  /// (see [createMileagePeriod]) -- they're copied verbatim from the
+  /// template right here, so healing them now, once, is enough; every
+  /// later write (add receipt/trip) only heals the visible sheets, since
+  /// re-healing potentially large hidden sheets on every single write was
+  /// measured to dominate save latency on a real device. Built inside a
+  /// spawned isolate (see safe_xlsx_write.dart) so this doesn't block the
+  /// UI isolate at app startup either.
+  Future<void> ensureMileageFileExists(MileageCycle cycle, AppSettings settings) async {
+    final dir = await _reportsDir();
+    final prefix = sanitizedFilenamePrefix(settings.firstName);
+    final namePrefix = prefix.isEmpty ? '' : '${prefix}_';
+
+    final existingMileage = await findPeriodFile(dir, 'MileageReport', cycle.fileId);
+    if (existingMileage != null) return;
+
+    if (await _migrateLegacyMileageFile(dir, cycle, namePrefix)) return;
+
+    final mileageFile = File('${dir.path}/${namePrefix}MileageReport_${cycle.fileId}.xlsx');
+    await createMileagePeriod(
+      mileageFile,
+      periodLabel: cycleLabel(cycle),
+      employeeName: settings.fullName,
+      // The Kilometers row's date must reflect the end of the WHOLE
+      // cycle, not just the opening half (section 6.2/13 п.1а).
+      periodEnd: cycle.end,
+      // Section 6.2, case 1 (file doesn't exist yet): the cycle's own
+      // rate (fixed on its opening half), or the Settings default if
+      // neither half of the cycle has one of its own.
+      kmRate: cycle.kmRate ?? settings.kmRate,
+    );
+  }
+
+  /// One-time migration for a Mileage Report file created by a pre-cycle
+  /// build (whimsical-booping-salamander.md): before this feature, a
+  /// Mileage file was keyed by a single 2-week [PayrollPeriod.fileId], the
+  /// same as Timesheet still is today. A user with real data from before
+  /// this update has such a file sitting under [cycle.firstHalf.fileId] or
+  /// [cycle.secondHalf.fileId] -- renaming it in place (real receipts/trips
+  /// preserved untouched) is the only safe option; creating a fresh blank
+  /// file under the new cycle-keyed name would silently orphan the old one
+  /// and make the user's real entries invisible in the app (section 5:
+  /// "не выбирать наугад" -- the same principle [PeriodFileAmbiguousException]
+  /// already enforces elsewhere). Returns `true` if a migration happened
+  /// (nothing left to do), `false` if there was nothing to migrate.
+  Future<bool> _migrateLegacyMileageFile(Directory dir, MileageCycle cycle, String namePrefix) async {
+    final legacyFirstHalf = await findPeriodFile(dir, 'MileageReport', cycle.firstHalf.fileId);
+    final legacySecondHalf = await findPeriodFile(dir, 'MileageReport', cycle.secondHalf.fileId);
+    if (legacyFirstHalf != null && legacySecondHalf != null && legacyFirstHalf.path != legacySecondHalf.path) {
+      // Both halves independently have their own pre-update Mileage file --
+      // can't safely pick one to keep and one to discard.
+      throw PeriodFileAmbiguousException(
+          'MileageReport', [legacyFirstHalf.uri.pathSegments.last, legacySecondHalf.uri.pathSegments.last]);
+    }
+    final legacy = legacyFirstHalf ?? legacySecondHalf;
+    if (legacy == null) return false;
+
+    final migratedFile = File('${dir.path}/${namePrefix}MileageReport_${cycle.fileId}.xlsx');
+    await legacy.rename(migratedFile.path);
+
+    // Best-effort: carry the file's own backup along under the new name too
+    // (section 13 п.5), so the next write's backupBeforeWrite doesn't leave
+    // a stale, permanently-orphaned .bak sitting under the old filename.
+    final oldBackup = await _backupManager.backupFileFor(legacy);
+    if (await oldBackup.exists()) {
+      final newBackup = await _backupManager.backupFileFor(migratedFile);
+      await oldBackup.rename(newBackup.path);
+    }
+    return true;
   }
 
   /// Periods (from [allPeriods], excluding [currentPeriod]) that fall
@@ -191,6 +255,16 @@ class PeriodFileManager {
   /// guessing which one to delete -- this runs unattended at every startup
   /// with no user available to arbitrate, so deleting the wrong file would
   /// be silent, unrecoverable data loss (section 5: "не выбирать наугад").
+  ///
+  /// Still keyed off each 2-week [PayrollPeriod]'s own `fileId` for both
+  /// file kinds -- correct for Timesheet as-is, but only an approximation
+  /// for Mileage now that its files are cycle-keyed; a period-level
+  /// retention pass can delete a Mileage file that's still live for the
+  /// other half of its cycle. Left as the pre-existing behavior here
+  /// deliberately -- reworking this onto cycles is Пакет 7 of
+  /// `whimsical-booping-salamander.md`, which needs its own
+  /// regression test written first (a real data-loss risk this method
+  /// doesn't yet guard against).
   Future<void> cleanupAccordingToRetention({
     required List<PayrollPeriod> allPeriods,
     required PayrollPeriod currentPeriod,

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_strings.dart';
 import '../models/payroll_period.dart';
 import '../services/period_file_manager.dart';
+import '../services/period_repository.dart';
 import '../services/safe_xlsx_write.dart';
 import '../utils/time_format.dart';
 import 'add_receipt_screen.dart';
@@ -20,7 +21,7 @@ class ReceiptListScreen extends StatefulWidget {
 }
 
 class _ReceiptListScreenState extends State<ReceiptListScreen> {
-  late Future<MileageReportSummary> _future;
+  late Future<MileageReportSummary?> _future;
 
   @override
   void initState() {
@@ -28,8 +29,15 @@ class _ReceiptListScreenState extends State<ReceiptListScreen> {
     _future = _load();
   }
 
-  Future<MileageReportSummary> _load() async {
-    final file = await PeriodFileManager().mileageReportFile(widget.period);
+  /// `null` means [widget.period] isn't paired into a Mileage cycle yet
+  /// (see `MileageCycle`) -- no Mileage Report file could exist for it, not
+  /// an error to surface via `snapshot.hasError`.
+  Future<MileageReportSummary?> _load() async {
+    final periodRepo = PeriodRepository();
+    final periods = await periodRepo.loadAll();
+    final cycle = periodRepo.mileageCycleFor(widget.period, periods);
+    if (cycle == null) return null;
+    final file = await PeriodFileManager().mileageReportFile(cycle);
     return readMileageReportSummary(file);
   }
 
@@ -39,7 +47,7 @@ class _ReceiptListScreenState extends State<ReceiptListScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(t(context, 'receiptList.title'))),
-      body: FutureBuilder<MileageReportSummary>(
+      body: FutureBuilder<MileageReportSummary?>(
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
@@ -47,6 +55,14 @@ class _ReceiptListScreenState extends State<ReceiptListScreen> {
           }
           if (snapshot.hasError) {
             return Center(child: Text('${t(context, 'home.errorPrefix')} ${snapshot.error}'));
+          }
+          if (snapshot.data == null) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(t(context, 'mileageCycle.notReadyMessage'), textAlign: TextAlign.center),
+              ),
+            );
           }
           final receipts = snapshot.data!.receipts;
           if (receipts.isEmpty) {

@@ -5,8 +5,10 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 import 'package:image_picker/image_picker.dart';
 
 import '../l10n/app_strings.dart';
+import '../models/mileage_cycle.dart';
 import '../models/payroll_period.dart';
 import '../services/period_file_manager.dart';
+import '../services/period_repository.dart';
 import '../services/receipt_parser.dart';
 import '../services/safe_xlsx_write.dart';
 import '../services/settings_repository.dart';
@@ -52,9 +54,17 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
   String? _subtotalError;
   String? _gstError;
 
+  /// Resolved once in [initState] and gates the whole screen (not just the
+  /// moment of saving) -- so the user doesn't walk through OCR/manual entry
+  /// only to discover at Save time that [widget.period] isn't paired into a
+  /// Mileage cycle yet (`MileageCycle`, whimsical-booping-salamander.md
+  /// Пакет 3).
+  late Future<MileageCycle?> _cycleFuture;
+
   @override
   void initState() {
     super.initState();
+    _cycleFuture = _resolveCycle();
     final existing = widget.existing;
     if (existing != null) {
       _mode = _EntryMode.manual;
@@ -74,6 +84,12 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
     _subtotalController.dispose();
     _gstController.dispose();
     super.dispose();
+  }
+
+  Future<MileageCycle?> _resolveCycle() async {
+    final periodRepo = PeriodRepository();
+    final periods = await periodRepo.loadAll();
+    return periodRepo.mileageCycleFor(widget.period, periods);
   }
 
   Future<void> _pickAndScan(ImageSource source) async {
@@ -211,8 +227,12 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
       _savePhase = SaveXlsxPhase.reading;
     });
     try {
+      // Already resolved (and non-null -- the screen is gated on it in
+      // build()) by the time Save is reachable; awaiting the same Future
+      // again just returns the cached result, no re-resolve.
+      final cycle = (await _cycleFuture)!;
       final fileManager = PeriodFileManager();
-      final file = await fileManager.mileageReportFile(widget.period);
+      final file = await fileManager.mileageReportFile(cycle);
       final settings = await SettingsRepository().load();
       final input = ReceiptInput(
         date: _date,
@@ -236,10 +256,14 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
         await saveMileageReceipt(
           file,
           input,
-          // Section 6.2's priority rule: the period's own rate wins if set,
-          // otherwise the Settings default -- and the file's own G1 wins
-          // over both if it's already filled (resolved inside the engine).
-          periodKmRate: widget.period.kmRate,
+          // Section 6.2's priority rule: the CYCLE's own rate wins if set
+          // (fixed on its opening half, not widget.period -- see
+          // MileageCycle.kmRate), otherwise the Settings default -- and the
+          // file's own G1 wins over both if it's already filled (resolved
+          // inside the engine). Using widget.period.kmRate here would be
+          // wrong for the second-half period, whose own kmRate field is no
+          // longer meaningful for Mileage once a cycle is formed.
+          periodKmRate: cycle.kmRate,
           settingsDefaultRate: settings.kmRate,
           onPhase: onPhase,
         );
@@ -275,11 +299,30 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
       appBar: AppBar(
         title: Text(t(context, widget.existing != null ? 'addReceipt.editTitle' : 'addReceipt.title')),
       ),
-      body: _busy
-          ? _buildSaveProgress(context)
-          : _mode == _EntryMode.none
-              ? _buildEntryChoice()
-              : _buildConfirmForm(),
+      body: FutureBuilder<MileageCycle?>(
+        future: _cycleFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text('${t(context, 'home.errorPrefix')} ${snapshot.error}'));
+          }
+          if (snapshot.data == null) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(t(context, 'mileageCycle.notReadyMessage'), textAlign: TextAlign.center),
+              ),
+            );
+          }
+          return _busy
+              ? _buildSaveProgress(context)
+              : _mode == _EntryMode.none
+                  ? _buildEntryChoice()
+                  : _buildConfirmForm();
+        },
+      ),
     );
   }
 

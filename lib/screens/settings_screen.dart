@@ -101,7 +101,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         final periods = await periodRepo.loadAll();
         final current = periodRepo.findCurrent(periods, DateTime.now());
         if (current != null) {
-          await PeriodFileManager().writeRateIfFileExists(current, newKmRate);
+          // TODO(whimsical-booping-salamander.md, Пакет 5): this still
+          // writes the rate straight into the current Mileage cycle's file
+          // (if any) -- the plan's "changes always apply from next cycle
+          // only, with a warning, an already-started file is never
+          // rewritten retroactively" behavior isn't implemented yet.
+          final cycle = periodRepo.mileageCycleFor(current, periods);
+          await PeriodFileManager().writeRateIfFileExists(cycle, newKmRate);
           await periodRepo.updatePeriod(current.copyWith(kmRate: newKmRate));
         }
         _originalKmRate = newKmRate;
@@ -119,6 +125,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         if (current != null) {
           await PeriodFileManager().writeHeaderIfFilesExist(
             current,
+            cycle: periodRepo.mileageCycleFor(current, periods),
             employeeName: newSettings.fullName,
             phone: newSettings.phone,
           );

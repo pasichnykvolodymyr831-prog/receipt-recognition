@@ -1,5 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/mileage_cycle.dart';
 import '../models/payroll_period.dart';
 import 'backup_manager.dart';
 import 'notification_service.dart';
@@ -12,7 +13,18 @@ class BootstrapData {
   final List<PayrollPeriod> allPeriods;
   final PayrollPeriod? current;
 
-  const BootstrapData({required this.settings, required this.allPeriods, required this.current});
+  /// The 4-week Mileage cycle [current] belongs to, or `null` if it's
+  /// currently orphaned (its partner half hasn't been added yet -- see
+  /// `MileageCycle`). Resolved once here so screens don't each have to
+  /// re-walk [allPeriods] to find it.
+  final MileageCycle? currentCycle;
+
+  const BootstrapData({
+    required this.settings,
+    required this.allPeriods,
+    required this.current,
+    required this.currentCycle,
+  });
 }
 
 /// Orchestrates the section-5 app-startup sequence: seed/load periods,
@@ -41,7 +53,8 @@ class AppStartupService {
     final settings = await settingsRepo.load();
     final periods = await periodRepo.loadAll();
     final current = periodRepo.findCurrent(periods, DateTime.now());
-    return BootstrapData(settings: settings, allPeriods: periods, current: current);
+    final currentCycle = current == null ? null : periodRepo.mileageCycleFor(current, periods);
+    return BootstrapData(settings: settings, allPeriods: periods, current: current, currentCycle: currentCycle);
   }
 
   (DateTime, DateTime) suggestNextPeriodRange(List<PayrollPeriod> periods) =>
@@ -56,15 +69,21 @@ class AppStartupService {
   /// period, not just this one.
   Future<void> prepareCurrentPeriod(
     PayrollPeriod period,
+    MileageCycle? cycle,
     AppSettings settings,
     List<PayrollPeriod> allPeriods, {
     void Function(String? payload)? onNotificationTap,
   }) async {
     // section 13.5: recover from a crash/kill mid-write before touching the files.
-    await backupManager.restoreIfCorrupted(await fileManager.mileageReportFile(period));
+    if (cycle != null) {
+      await backupManager.restoreIfCorrupted(await fileManager.mileageReportFile(cycle));
+    }
     await backupManager.restoreIfCorrupted(await fileManager.timesheetFile(period));
 
-    await fileManager.ensureFilesExist(period, settings);
+    await fileManager.ensureTimesheetFileExists(period, settings);
+    if (cycle != null) {
+      await fileManager.ensureMileageFileExists(cycle, settings);
+    }
     await fileManager.cleanupAccordingToRetention(
       allPeriods: allPeriods,
       currentPeriod: period,

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_strings.dart';
 import '../models/payroll_period.dart';
 import '../services/period_file_manager.dart';
+import '../services/period_repository.dart';
 import '../services/safe_xlsx_write.dart';
 import '../utils/time_format.dart';
 import 'driving_details_screen.dart';
@@ -20,7 +21,7 @@ class DrivingDetailListScreen extends StatefulWidget {
 }
 
 class _DrivingDetailListScreenState extends State<DrivingDetailListScreen> {
-  late Future<MileageReportSummary> _future;
+  late Future<MileageReportSummary?> _future;
 
   @override
   void initState() {
@@ -28,8 +29,15 @@ class _DrivingDetailListScreenState extends State<DrivingDetailListScreen> {
     _future = _load();
   }
 
-  Future<MileageReportSummary> _load() async {
-    final file = await PeriodFileManager().mileageReportFile(widget.period);
+  /// `null` means [widget.period] isn't paired into a Mileage cycle yet
+  /// (see `MileageCycle`) -- no Mileage Report file could exist for it, not
+  /// an error to surface via `snapshot.hasError`.
+  Future<MileageReportSummary?> _load() async {
+    final periodRepo = PeriodRepository();
+    final periods = await periodRepo.loadAll();
+    final cycle = periodRepo.mileageCycleFor(widget.period, periods);
+    if (cycle == null) return null;
+    final file = await PeriodFileManager().mileageReportFile(cycle);
     return readMileageReportSummary(file);
   }
 
@@ -39,7 +47,7 @@ class _DrivingDetailListScreenState extends State<DrivingDetailListScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(t(context, 'tripList.title'))),
-      body: FutureBuilder<MileageReportSummary>(
+      body: FutureBuilder<MileageReportSummary?>(
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
@@ -47,6 +55,14 @@ class _DrivingDetailListScreenState extends State<DrivingDetailListScreen> {
           }
           if (snapshot.hasError) {
             return Center(child: Text('${t(context, 'home.errorPrefix')} ${snapshot.error}'));
+          }
+          if (snapshot.data == null) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(t(context, 'mileageCycle.notReadyMessage'), textAlign: TextAlign.center),
+              ),
+            );
           }
           final trips = snapshot.data!.drivingDetails;
           if (trips.isEmpty) {

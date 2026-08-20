@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 
+import '../models/mileage_cycle.dart';
 import '../models/payroll_period.dart';
 
 /// Owns the locally-writable copy of the payroll period list (section 5):
@@ -112,6 +113,44 @@ class PeriodRepository {
     return null;
   }
 
+  /// Pairs up consecutive periods into 4-week Mileage cycles (accounting
+  /// accepts Mileage Report every 4 weeks, Timesheet stays every 2 weeks --
+  /// see `whimsical-booping-salamander.md`). A "24th-8th" period (`start.day
+  /// >= 24`) pairs with the very next period in start order only if that
+  /// period is a genuine "9th-23rd" shape (`start.day < 24`) AND starts
+  /// exactly the day after the first half ends -- not merely "next in the
+  /// list", so a gap in manually-edited periods never silently glues two
+  /// unrelated periods into one cycle. Either half without a matching
+  /// partner (the real orphan case in the seed data: the very first period,
+  /// 2026-03-09..23, has no preceding "24-8" half) simply doesn't produce a
+  /// cycle -- no Mileage file is created for it until the pair is complete.
+  List<MileageCycle> mileageCycles(List<PayrollPeriod> periods) {
+    final sorted = [...periods]..sort((a, b) => a.start.compareTo(b.start));
+    final cycles = <MileageCycle>[];
+    for (var i = 0; i < sorted.length; i++) {
+      final first = sorted[i];
+      if (first.start.day < 24) continue;
+      if (i + 1 >= sorted.length) continue;
+      final second = sorted[i + 1];
+      if (second.start.day >= 24) continue;
+      if (!_isNextDay(first.end, second.start)) continue;
+      cycles.add(MileageCycle(firstHalf: first, secondHalf: second));
+    }
+    return cycles;
+  }
+
+  /// The Mileage cycle [period] belongs to (as either half), or `null` if
+  /// [period] is currently orphaned (its partner half hasn't been added
+  /// yet).
+  MileageCycle? mileageCycleFor(PayrollPeriod period, List<PayrollPeriod> periods) {
+    for (final cycle in mileageCycles(periods)) {
+      if (cycle.firstHalf.key == period.key || cycle.secondHalf.key == period.key) {
+        return cycle;
+      }
+    }
+    return null;
+  }
+
   /// Suggests start/end for the next period, continuing the "9-23" /
   /// "24-8th of next month" pattern the existing seed follows (e.g.
   /// 2026-07-24 to 2026-08-08). Purely a pre-fill convenience for the
@@ -135,6 +174,12 @@ class PeriodRepository {
     }
     return (nextStart, nextEnd);
   }
+}
+
+bool _isNextDay(DateTime end, DateTime start) {
+  final e = DateTime(end.year, end.month, end.day);
+  final s = DateTime(start.year, start.month, start.day);
+  return s.difference(e).inDays == 1;
 }
 
 int _daysInMonth(int year, int month) {

@@ -249,6 +249,19 @@ const Map<String, Map<String, String>> _strings = {
     'ru': 'Файлы этого периода недоступны',
   },
 
+  // Accounting accepts Mileage Report only every 4 weeks, as one file
+  // covering two consecutive periods (a "Mileage cycle") -- distinct from
+  // period.filesUnavailableMessage above, which is about retention having
+  // deleted files that DID exist; this is about the cycle simply not being
+  // complete yet (no such file could exist), so the two must never be
+  // conflated into one message (whimsical-booping-salamander.md, Пакет 3).
+  'mileageCycle.notReadyMessage': {
+    'en': 'This period is not yet paired with its Mileage cycle partner. '
+        'Add the next payroll period to enable Mileage Report entry here.',
+    'ru': 'Этот период ещё не объединён в пару со своим партнёром по Mileage-циклу. '
+        'Добавьте следующий период, чтобы включить ввод в Mileage Report здесь.',
+  },
+
   'receiptList.title': {'en': 'Receipts', 'ru': 'Чеки'},
   'receiptList.empty': {'en': 'No receipts yet.', 'ru': 'Чеков пока нет.'},
   'receiptList.noDescription': {'en': '(no description)', 'ru': '(без описания)'},

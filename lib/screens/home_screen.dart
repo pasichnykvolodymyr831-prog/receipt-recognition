@@ -36,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (data.current != null) {
       await _startup.prepareCurrentPeriod(
         data.current!,
+        data.currentCycle,
         data.settings,
         data.allPeriods,
         onNotificationTap: widget.onNotificationTap,
@@ -113,10 +114,16 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          // The current period's files always exist by the time this
-          // builds -- prepareCurrentPeriod's ensureFilesExist already ran
-          // in _load() above -- so this is a known constant, not a value
-          // worth an extra file-existence read to recompute (Пакет 10).
+          // The current period's Timesheet file always exists by the time
+          // this builds -- prepareCurrentPeriod's ensureTimesheetFileExists
+          // already ran in _load() above -- so this is a known constant,
+          // not a value worth an extra file-existence read to recompute
+          // (Пакет 10). The Mileage side may still be "not ready" if
+          // currentCycle is null (orphaned period, no partner half added
+          // yet) -- that's handled inside the destination screens
+          // themselves (Пакет 3 of whimsical-booping-salamander.md), not
+          // here at the tile level, since PeriodActionTiles' fixed 6-tile
+          // shape has no room for a per-tile distinction.
           PeriodActionTiles(period: current, onChanged: _reload, filesExist: true, allowAdding: true),
           Card(
             child: ListTile(
