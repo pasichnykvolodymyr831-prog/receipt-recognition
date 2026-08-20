@@ -48,6 +48,31 @@ class ReceiptInput {
   const ReceiptInput({this.date, this.description, this.subtotal, this.gst});
 }
 
+/// A previously-saved receipt read back from the sheet (section 14): the
+/// same fields as [ReceiptInput], plus the row it lives on -- needed so an
+/// edit can write back to that exact row instead of going through
+/// [MileageReportEngine.writeReceipt]'s Kilometers-row shift algorithm.
+class ReceiptRecord {
+  final int row;
+  final DateTime? date;
+  final String? description;
+  final double? subtotal;
+  final double? gst;
+
+  const ReceiptRecord({required this.row, this.date, this.description, this.subtotal, this.gst});
+}
+
+/// A previously-saved Driving Details trip read back from the sheet
+/// (section 14), with its row for the same reason as [ReceiptRecord].
+class DrivingDetailRecord {
+  final int row;
+  final DateTime? date;
+  final String trip;
+  final double? km;
+
+  const DrivingDetailRecord({required this.row, this.date, required this.trip, this.km});
+}
+
 /// Read/write engine for the "Truman Homes" and "Driving Details" sheets of
 /// the Mileage Report workbook, implementing the exact cell map (section 6)
 /// and the Kilometers-row algorithm (section 7). Every other sheet (the 5
@@ -425,6 +450,89 @@ class MileageReportEngine {
     setCellValue(_drivingSheet, 'B$row', TextCellValue(trip));
     // Rounded again here on top of the screen's own rounding (section 9) --
     // same belt-and-suspenders reasoning as writeReceipt's Subtotal/GST.
+    setCellValue(_drivingSheet, 'C$row', DoubleCellValue(round2(km)));
+
+    recalcKilometersRow(
+      kmTotal: sumDrivingDetailsKm(),
+      periodKmRate: periodKmRate,
+      settingsDefaultRate: settingsDefaultRate,
+    );
+  }
+
+  /// Lists every already-saved receipt (section 14): rows 8-27 excluding
+  /// the Kilometers row, included only when at least one of the
+  /// app-managed fields (Date/Description/Subtotal/GST) is filled -- the
+  /// same two conditions section 14 requires, so a row that's merely
+  /// styled but never written to isn't mistaken for a real receipt.
+  List<ReceiptRecord> listReceipts() {
+    final result = <ReceiptRecord>[];
+    for (var row = firstDataRow; row <= lastDataRow; row++) {
+      final descriptionText = textOf(_cell(_sheet, 'B$row').value);
+      if (descriptionText.startsWith('Kilometers (')) continue;
+
+      final date = dateOf(_cell(_sheet, 'A$row').value);
+      final description = descriptionText.isEmpty ? null : descriptionText;
+      final subtotal = numberOf(_cell(_sheet, 'D$row').value);
+      final gst = numberOf(_cell(_sheet, 'K$row').value);
+      if (date == null && description == null && subtotal == null && gst == null) continue;
+
+      result.add(ReceiptRecord(row: row, date: date, description: description, subtotal: subtotal, gst: gst));
+    }
+    return result;
+  }
+
+  /// Lists every already-saved Driving Details trip (section 14): rows
+  /// 2-18, included when at least one of Date/Trip/KM is filled.
+  List<DrivingDetailRecord> listDrivingDetails() {
+    final result = <DrivingDetailRecord>[];
+    for (var row = firstDrivingRow; row <= lastDrivingRow; row++) {
+      final date = dateOf(_cell(_drivingSheet, 'A$row').value);
+      final tripText = textOf(_cell(_drivingSheet, 'B$row').value);
+      final km = numberOf(_cell(_drivingSheet, 'C$row').value);
+      if (date == null && tripText.isEmpty && km == null) continue;
+
+      result.add(DrivingDetailRecord(row: row, date: date, trip: tripText, km: km));
+    }
+    return result;
+  }
+
+  /// Overwrites an already-saved receipt row in place (section 14) -- no
+  /// Kilometers-row search, no shift, unlike [writeReceipt]. Every field is
+  /// written unconditionally, including clearing it when null/empty, unlike
+  /// [_writeReceiptRow]'s skip-when-absent semantics (correct for ADD,
+  /// where "not provided" means "leave the already-blank cell alone"; wrong
+  /// for EDIT, where "not provided" means "the user cleared it").
+  void updateReceipt(int row, ReceiptInput receipt) {
+    if (row < firstDataRow || row > lastDataRow) {
+      throw RangeError.value(row, 'row', 'Must be between $firstDataRow and $lastDataRow');
+    }
+    if (textOf(_cell(_sheet, 'B$row').value).startsWith('Kilometers (')) {
+      throw ArgumentError.value(row, 'row', 'Refusing to overwrite the Kilometers row as a receipt');
+    }
+    setCellValue(_sheet, 'A$row', receipt.date == null ? null : DateCellValue.fromDateTime(receipt.date!));
+    final description = receipt.description?.trim() ?? '';
+    setCellValue(_sheet, 'B$row', description.isEmpty ? null : TextCellValue(description));
+    setCellValue(_sheet, 'D$row', receipt.subtotal == null ? null : DoubleCellValue(round2(receipt.subtotal!)));
+    setCellValue(_sheet, 'K$row', receipt.gst == null ? null : DoubleCellValue(round2(receipt.gst!)));
+  }
+
+  /// Overwrites an already-saved Driving Details row in place (section 14)
+  /// -- no free-row search, unlike [writeDrivingDetail]. Recalculates the
+  /// Kilometers row afterward (Description + Travel), since editing KM
+  /// changes the period-wide total that row summarizes.
+  void updateDrivingDetail(
+    int row, {
+    required DateTime date,
+    required String trip,
+    required double km,
+    double? periodKmRate,
+    double settingsDefaultRate = 0.56,
+  }) {
+    if (row < firstDrivingRow || row > lastDrivingRow) {
+      throw RangeError.value(row, 'row', 'Must be between $firstDrivingRow and $lastDrivingRow');
+    }
+    setCellValue(_drivingSheet, 'A$row', DateCellValue.fromDateTime(date));
+    setCellValue(_drivingSheet, 'B$row', TextCellValue(trip));
     setCellValue(_drivingSheet, 'C$row', DoubleCellValue(round2(km)));
 
     recalcKilometersRow(

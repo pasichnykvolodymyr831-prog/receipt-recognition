@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import '../l10n/app_strings.dart';
 import '../models/payroll_period.dart';
 import 'add_receipt_screen.dart';
+import 'driving_detail_list_screen.dart';
 import 'driving_details_screen.dart';
+import 'receipt_list_screen.dart';
 import 'share_save_screen.dart';
 import 'timesheet_screen.dart';
 
@@ -31,6 +33,15 @@ class PeriodActionTiles extends StatelessWidget {
           },
         ),
         _ActionTile(
+          icon: Icons.receipt,
+          label: t(context, 'home.receiptList'),
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (context) => ReceiptListScreen(period: period)),
+            );
+          },
+        ),
+        _ActionTile(
           icon: Icons.directions_car,
           label: t(context, 'home.drivingDetails'),
           onTap: () async {
@@ -38,6 +49,15 @@ class PeriodActionTiles extends StatelessWidget {
               MaterialPageRoute(builder: (context) => DrivingDetailsScreen(period: period)),
             );
             if (saved == true) onChanged?.call();
+          },
+        ),
+        _ActionTile(
+          icon: Icons.list_alt,
+          label: t(context, 'home.tripList'),
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (context) => DrivingDetailListScreen(period: period)),
+            );
           },
         ),
         _ActionTile(

@@ -15,7 +15,12 @@ import '../xlsx/mileage_report_engine.dart';
 class DrivingDetailsScreen extends StatefulWidget {
   final PayrollPeriod period;
 
-  const DrivingDetailsScreen({super.key, required this.period});
+  /// When set, this screen edits an already-saved trip in place (section
+  /// 14) instead of adding a new one -- fields prefilled, no free-row
+  /// search on save.
+  final DrivingDetailRecord? existing;
+
+  const DrivingDetailsScreen({super.key, required this.period, this.existing});
 
   @override
   State<DrivingDetailsScreen> createState() => _DrivingDetailsScreenState();
@@ -31,6 +36,17 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
   // Section 9: Trip is required, KM must be strictly > 0.
   String? _tripError;
   String? _kmError;
+
+  @override
+  void initState() {
+    super.initState();
+    final existing = widget.existing;
+    if (existing != null) {
+      if (existing.date != null) _date = existing.date!;
+      _tripController.text = existing.trip;
+      _kmController.text = existing.km?.toStringAsFixed(2) ?? '';
+    }
+  }
 
   @override
   void dispose() {
@@ -85,17 +101,35 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
       final fileManager = PeriodFileManager();
       final file = await fileManager.mileageReportFile(widget.period);
       final settings = await SettingsRepository().load();
-      await saveMileageDrivingDetail(
-        file,
-        date: _date,
-        trip: trip,
-        km: km,
-        periodKmRate: widget.period.kmRate,
-        settingsDefaultRate: settings.kmRate,
-        onPhase: (phase) {
-          if (mounted) setState(() => _savePhase = phase);
-        },
-      );
+      void onPhase(SaveXlsxPhase phase) {
+        if (mounted) setState(() => _savePhase = phase);
+      }
+
+      final existing = widget.existing;
+      if (existing != null) {
+        // Section 14: editing writes back to the same row -- no free-row
+        // search, unlike saveMileageDrivingDetail.
+        await updateMileageDrivingDetail(
+          file,
+          row: existing.row,
+          date: _date,
+          trip: trip,
+          km: km,
+          periodKmRate: widget.period.kmRate,
+          settingsDefaultRate: settings.kmRate,
+          onPhase: onPhase,
+        );
+      } else {
+        await saveMileageDrivingDetail(
+          file,
+          date: _date,
+          trip: trip,
+          km: km,
+          periodKmRate: widget.period.kmRate,
+          settingsDefaultRate: settings.kmRate,
+          onPhase: onPhase,
+        );
+      }
 
       if (mounted) Navigator.of(context).pop(true);
     } on MileageReportRowsExhaustedException {
@@ -126,7 +160,9 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
     final dateFmt = formatDate(_date);
 
     return Scaffold(
-      appBar: AppBar(title: Text(t(context, 'drivingDetails.title'))),
+      appBar: AppBar(
+        title: Text(t(context, widget.existing != null ? 'drivingDetails.editTitle' : 'drivingDetails.title')),
+      ),
       body: _busy
           ? _buildSaveProgress(context)
           : ListView(

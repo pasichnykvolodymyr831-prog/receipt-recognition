@@ -20,7 +20,12 @@ enum _EntryMode { none, ocr, manual }
 class AddReceiptScreen extends StatefulWidget {
   final PayrollPeriod period;
 
-  const AddReceiptScreen({super.key, required this.period});
+  /// When set, this screen edits an already-saved receipt in place
+  /// (section 14) instead of adding a new one -- opens straight into the
+  /// confirm form, prefilled, with no OCR/manual entry choice.
+  final ReceiptRecord? existing;
+
+  const AddReceiptScreen({super.key, required this.period, this.existing});
 
   @override
   State<AddReceiptScreen> createState() => _AddReceiptScreenState();
@@ -46,6 +51,22 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
   String? _dateError;
   String? _subtotalError;
   String? _gstError;
+
+  @override
+  void initState() {
+    super.initState();
+    final existing = widget.existing;
+    if (existing != null) {
+      _mode = _EntryMode.manual;
+      _editing = true;
+      _date = existing.date;
+      _subtotal = existing.subtotal;
+      _gst = existing.gst;
+      _descriptionController.text = existing.description ?? '';
+      _subtotalController.text = existing.subtotal?.toStringAsFixed(2) ?? '';
+      _gstController.text = existing.gst?.toStringAsFixed(2) ?? '';
+    }
+  }
 
   @override
   void dispose() {
@@ -193,26 +214,36 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
       final fileManager = PeriodFileManager();
       final file = await fileManager.mileageReportFile(widget.period);
       final settings = await SettingsRepository().load();
-      await saveMileageReceipt(
-        file,
-        ReceiptInput(
-          date: _date,
-          description: description.isEmpty ? null : description,
-          // Section 8: round to 2 decimals here, at the point the value
-          // leaves the screen -- a typed "12.3456" must never reach the
-          // file as anything but 12.35.
-          subtotal: subtotal == null ? null : round2(subtotal),
-          gst: gst == null ? null : round2(gst),
-        ),
-        // Section 6.2's priority rule: the period's own rate wins if set,
-        // otherwise the Settings default -- and the file's own G1 wins over
-        // both if it's already filled (resolved inside the engine).
-        periodKmRate: widget.period.kmRate,
-        settingsDefaultRate: settings.kmRate,
-        onPhase: (phase) {
-          if (mounted) setState(() => _savePhase = phase);
-        },
+      final input = ReceiptInput(
+        date: _date,
+        description: description.isEmpty ? null : description,
+        // Section 8: round to 2 decimals here, at the point the value
+        // leaves the screen -- a typed "12.3456" must never reach the
+        // file as anything but 12.35.
+        subtotal: subtotal == null ? null : round2(subtotal),
+        gst: gst == null ? null : round2(gst),
       );
+      void onPhase(SaveXlsxPhase phase) {
+        if (mounted) setState(() => _savePhase = phase);
+      }
+
+      final existing = widget.existing;
+      if (existing != null) {
+        // Section 14: editing writes back to the same row, no Kilometers-
+        // row shift, so the rate parameters writeReceipt needs don't apply.
+        await updateMileageReceipt(file, row: existing.row, receipt: input, onPhase: onPhase);
+      } else {
+        await saveMileageReceipt(
+          file,
+          input,
+          // Section 6.2's priority rule: the period's own rate wins if set,
+          // otherwise the Settings default -- and the file's own G1 wins
+          // over both if it's already filled (resolved inside the engine).
+          periodKmRate: widget.period.kmRate,
+          settingsDefaultRate: settings.kmRate,
+          onPhase: onPhase,
+        );
+      }
 
       if (mounted) Navigator.of(context).pop(true);
     } on MileageReportRowsExhaustedException {
@@ -241,7 +272,9 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(t(context, 'addReceipt.title'))),
+      appBar: AppBar(
+        title: Text(t(context, widget.existing != null ? 'addReceipt.editTitle' : 'addReceipt.title')),
+      ),
       body: _busy
           ? _buildSaveProgress(context)
           : _mode == _EntryMode.none

@@ -36,6 +36,12 @@ double? numberOf(CellValue? value) {
   return null;
 }
 
+/// Returns the cell's date, or null if the cell is empty or not a date.
+DateTime? dateOf(CellValue? value) {
+  if (value is DateCellValue) return value.asDateTimeLocal();
+  return null;
+}
+
 bool isEmptyCell(CellValue? value) {
   if (value == null) return true;
   if (value is TextCellValue) return value.value.toString().trim().isEmpty;

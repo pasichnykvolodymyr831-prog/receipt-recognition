@@ -165,6 +165,29 @@ class _ChangeRateOp extends _MileageOp {
   const _ChangeRateOp(this.newRate);
 }
 
+class _UpdateReceiptOp extends _MileageOp {
+  final int row;
+  final ReceiptInput receipt;
+  const _UpdateReceiptOp({required this.row, required this.receipt});
+}
+
+class _UpdateDrivingDetailOp extends _MileageOp {
+  final int row;
+  final DateTime date;
+  final String trip;
+  final double km;
+  final double? periodKmRate;
+  final double settingsDefaultRate;
+  const _UpdateDrivingDetailOp({
+    required this.row,
+    required this.date,
+    required this.trip,
+    required this.km,
+    required this.periodKmRate,
+    required this.settingsDefaultRate,
+  });
+}
+
 class _MileageRequest {
   final Uint8List sourceBytes;
   final Uint8List templateBytes;
@@ -210,6 +233,17 @@ void _mileageIsolateEntry(_MileageRequest req) {
         );
       case _ChangeRateOp o:
         engine.changeRate(o.newRate);
+      case _UpdateReceiptOp o:
+        engine.updateReceipt(o.row, o.receipt);
+      case _UpdateDrivingDetailOp o:
+        engine.updateDrivingDetail(
+          o.row,
+          date: o.date,
+          trip: o.trip,
+          km: o.km,
+          periodKmRate: o.periodKmRate,
+          settingsDefaultRate: o.settingsDefaultRate,
+        );
     }
 
     req.replyPort.send(SaveXlsxPhase.writing);
@@ -419,6 +453,136 @@ Future<void> changeMileagePeriodRate(
   );
   await logStyleWarnings('changeMileagePeriodRate', file.uri.pathSegments.last, result.styleWarnings);
   await _atomicWrite(file, result.bytes);
+}
+
+/// Overwrites an already-saved receipt on [file] in place (section 14) --
+/// no Kilometers-row shift, unlike [saveMileageReceipt]. [row] must come
+/// from a [ReceiptRecord] returned by [readMileageReportSummary] against
+/// this same file.
+Future<void> updateMileageReceipt(
+  File file, {
+  required int row,
+  required ReceiptInput receipt,
+  void Function(SaveXlsxPhase)? onPhase,
+  BackupManager? backupManager,
+}) async {
+  onPhase?.call(SaveXlsxPhase.reading);
+  final sourceBytes = await file.readAsBytes();
+  final templateBytes = await _mileageTemplateBytes();
+  await (backupManager ?? _backupManager).backupBeforeWrite(file);
+  final result = await _runMileageIsolate(
+    sourceBytes: sourceBytes,
+    templateBytes: templateBytes,
+    healHiddenSheets: false,
+    op: _UpdateReceiptOp(row: row, receipt: receipt),
+    onPhase: onPhase,
+  );
+  await logStyleWarnings('updateMileageReceipt', file.uri.pathSegments.last, result.styleWarnings);
+  await _atomicWrite(file, result.bytes);
+}
+
+/// Overwrites an already-saved Driving Details trip on [file] in place
+/// (section 14) and recalculates the Kilometers row -- no free-row search,
+/// unlike [saveMileageDrivingDetail]. [row] must come from a
+/// [DrivingDetailRecord] returned by [readMileageReportSummary] against
+/// this same file. See [saveMileageReceipt] for [periodKmRate]/
+/// [settingsDefaultRate].
+Future<void> updateMileageDrivingDetail(
+  File file, {
+  required int row,
+  required DateTime date,
+  required String trip,
+  required double km,
+  required double? periodKmRate,
+  required double settingsDefaultRate,
+  void Function(SaveXlsxPhase)? onPhase,
+  BackupManager? backupManager,
+}) async {
+  onPhase?.call(SaveXlsxPhase.reading);
+  final sourceBytes = await file.readAsBytes();
+  final templateBytes = await _mileageTemplateBytes();
+  await (backupManager ?? _backupManager).backupBeforeWrite(file);
+  final result = await _runMileageIsolate(
+    sourceBytes: sourceBytes,
+    templateBytes: templateBytes,
+    healHiddenSheets: false,
+    op: _UpdateDrivingDetailOp(
+      row: row,
+      date: date,
+      trip: trip,
+      km: km,
+      periodKmRate: periodKmRate,
+      settingsDefaultRate: settingsDefaultRate,
+    ),
+    onPhase: onPhase,
+  );
+  await logStyleWarnings('updateMileageDrivingDetail', file.uri.pathSegments.last, result.styleWarnings);
+  await _atomicWrite(file, result.bytes);
+}
+
+/// Read-only summary of a Mileage Report file's already-saved receipts and
+/// trips (section 14), extracted inside an isolate for the same reason as
+/// [readTimesheetSummary] -- decoding cost is the same as a write, and
+/// opening/refreshing the list screens should never block the UI isolate.
+class MileageReportSummary {
+  final List<ReceiptRecord> receipts;
+  final List<DrivingDetailRecord> drivingDetails;
+  const MileageReportSummary({required this.receipts, required this.drivingDetails});
+}
+
+class _SummarizeMileageRequest {
+  final Uint8List sourceBytes;
+  final SendPort replyPort;
+  const _SummarizeMileageRequest(this.sourceBytes, this.replyPort);
+}
+
+void _summarizeMileageIsolateEntry(_SummarizeMileageRequest req) {
+  try {
+    final engine = MileageReportEngine.fromBytes(normalizeXlsxRelationshipTargets(req.sourceBytes));
+    req.replyPort.send(MileageReportSummary(
+      receipts: engine.listReceipts(),
+      drivingDetails: engine.listDrivingDetails(),
+    ));
+  } catch (e) {
+    req.replyPort.send(e);
+  }
+}
+
+Future<MileageReportSummary> readMileageReportSummary(File file) async {
+  final sourceBytes = await file.readAsBytes();
+  final port = ReceivePort();
+  final errorPort = ReceivePort();
+  final completer = Completer<MileageReportSummary>();
+
+  final portSub = port.listen((message) {
+    if (message is MileageReportSummary) {
+      if (!completer.isCompleted) completer.complete(message);
+    } else if (!completer.isCompleted) {
+      completer.completeError(message);
+    }
+  });
+  final errorSub = errorPort.listen((message) {
+    if (!completer.isCompleted) {
+      completer.completeError(StateError('Mileage summary isolate failed: $message'));
+    }
+  });
+
+  Isolate? isolate;
+  try {
+    isolate = await Isolate.spawn(
+      _summarizeMileageIsolateEntry,
+      _SummarizeMileageRequest(sourceBytes, port.sendPort),
+      onError: errorPort.sendPort,
+    );
+    return await completer.future.timeout(_isolateTimeout,
+        onTimeout: () => throw StateError('Mileage summary isolate timed out after $_isolateTimeout'));
+  } finally {
+    isolate?.kill(priority: Isolate.immediate);
+    await portSub.cancel();
+    await errorSub.cancel();
+    port.close();
+    errorPort.close();
+  }
 }
 
 // ===================== Timesheet =====================

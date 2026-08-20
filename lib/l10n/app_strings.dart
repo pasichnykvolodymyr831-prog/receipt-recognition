@@ -27,7 +27,9 @@ const Map<String, Map<String, String>> _strings = {
   'home.due': {'en': 'Due:', 'ru': 'Срок сдачи:'},
   'home.weekendDue': {'en': 'Weekend due:', 'ru': 'Срок (выходные):'},
   'home.addReceipt': {'en': 'Add receipt', 'ru': 'Добавить чек'},
+  'home.receiptList': {'en': 'Receipts', 'ru': 'Чеки'},
   'home.drivingDetails': {'en': 'Driving Details', 'ru': 'Driving Details'},
+  'home.tripList': {'en': 'Trips', 'ru': 'Поездки'},
   'home.timesheet': {'en': 'Timesheet', 'ru': 'Timesheet'},
   'home.shareSave': {'en': 'Share / Save', 'ru': 'Поделиться / Сохранить'},
   'home.pastPeriods': {'en': 'Past periods', 'ru': 'Прошлые периоды'},
@@ -98,6 +100,7 @@ const Map<String, Map<String, String>> _strings = {
   },
 
   'addReceipt.title': {'en': 'Add receipt', 'ru': 'Добавить чек'},
+  'addReceipt.editTitle': {'en': 'Edit receipt', 'ru': 'Редактировать чек'},
   'addReceipt.camera': {'en': 'Camera', 'ru': 'Камера'},
   'addReceipt.gallery': {'en': 'Photo from gallery', 'ru': 'Фото из галереи'},
   'addReceipt.manual': {'en': 'Enter manually', 'ru': 'Ввести вручную'},
@@ -120,6 +123,7 @@ const Map<String, Map<String, String>> _strings = {
   'addReceipt.saveError': {'en': 'Could not save: {error}', 'ru': 'Не удалось сохранить: {error}'},
 
   'drivingDetails.title': {'en': 'Driving Details', 'ru': 'Driving Details'},
+  'drivingDetails.editTitle': {'en': 'Edit trip', 'ru': 'Редактировать поездку'},
   'drivingDetails.trip': {'en': 'Trip', 'ru': 'Маршрут'},
   'drivingDetails.km': {'en': 'KM', 'ru': 'Км'},
   'drivingDetails.invalidKm': {'en': 'Enter a valid KM value.', 'ru': 'Введите корректное значение км.'},
@@ -218,6 +222,13 @@ const Map<String, Map<String, String>> _strings = {
     'en': 'No past periods on this device yet.',
     'ru': 'На этом устройстве пока нет прошлых периодов.',
   },
+
+  'receiptList.title': {'en': 'Receipts', 'ru': 'Чеки'},
+  'receiptList.empty': {'en': 'No receipts yet.', 'ru': 'Чеков пока нет.'},
+  'receiptList.noDescription': {'en': '(no description)', 'ru': '(без описания)'},
+
+  'tripList.title': {'en': 'Trips', 'ru': 'Поездки'},
+  'tripList.empty': {'en': 'No trips yet.', 'ru': 'Поездок пока нет.'},
 };
 
 /// Looks up [key] in the current language (from the nearest [AppLocale]),

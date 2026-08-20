@@ -273,6 +273,93 @@ void main() {
       final reopened = MileageReportEngine.fromBytes(outFile.readAsBytesSync());
       expect(reopened.findKilometersRow(), engine.findKilometersRow());
     });
+
+    group('listReceipts / listDrivingDetails (section 14)', () {
+      test('listReceipts excludes the Kilometers row and empty rows', () {
+        engine.writeReceipt(
+          ReceiptInput(date: DateTime(2026, 8, 10), description: 'Home Depot', subtotal: 45.99, gst: 2.30),
+          currentKmTotal: 0,
+        );
+        engine.writeReceipt(
+          ReceiptInput(date: DateTime(2026, 8, 11), subtotal: 12.5, gst: 0.63),
+          currentKmTotal: 0,
+        );
+
+        final receipts = engine.listReceipts();
+        expect(receipts.length, 2, reason: 'must exclude the Kilometers row -- 3 receipt rows are non-empty total');
+        expect(receipts.any((r) => r.description?.startsWith('Kilometers (') ?? false), isFalse);
+        expect(receipts.map((r) => r.description), containsAll(['Home Depot', null]));
+        expect(receipts.map((r) => r.subtotal), containsAll([45.99, 12.5]));
+      });
+
+      test('listDrivingDetails only includes rows with content', () {
+        engine.writeDrivingDetail(date: DateTime(2026, 8, 10), trip: 'Site A to Site B', km: 42.5);
+        engine.writeDrivingDetail(date: DateTime(2026, 8, 12), trip: 'Site C', km: 10);
+
+        final trips = engine.listDrivingDetails();
+        expect(trips.length, 2);
+        expect(trips.map((t) => t.trip), ['Site A to Site B', 'Site C']);
+        expect(trips.map((t) => t.km), [42.5, 10.0]);
+      });
+    });
+
+    group('updateReceipt / updateDrivingDetail (section 14 -- edit in place, no shift)', () {
+      test('updateReceipt overwrites the given row without moving the Kilometers row', () {
+        engine.writeReceipt(
+          ReceiptInput(date: DateTime(2026, 8, 10), description: 'Home Depot', subtotal: 45.99, gst: 2.30),
+          currentKmTotal: 0,
+        );
+        final receipt = engine.listReceipts().single;
+        final kmRowBefore = engine.findKilometersRow();
+
+        engine.updateReceipt(
+          receipt.row,
+          const ReceiptInput(date: null, description: 'Corrected description', subtotal: 50.0, gst: 2.5),
+        );
+
+        expect(engine.findKilometersRow(), kmRowBefore, reason: 'editing an existing row must not shift Kilometers');
+        final updated = engine.listReceipts().single;
+        expect(updated.row, receipt.row);
+        expect(updated.description, 'Corrected description');
+        expect(updated.subtotal, 50.0);
+        expect(updated.gst, 2.5);
+      });
+
+      test('updateReceipt clears Description when passed empty -- unlike the add path, edit must clear', () {
+        engine.writeReceipt(
+          ReceiptInput(date: DateTime(2026, 8, 10), description: 'Home Depot', subtotal: 45.99, gst: 2.30),
+          currentKmTotal: 0,
+        );
+        final receipt = engine.listReceipts().single;
+
+        engine.updateReceipt(receipt.row, ReceiptInput(date: receipt.date, description: '', subtotal: receipt.subtotal, gst: receipt.gst));
+
+        expect(engine.listReceipts().single.description, isNull);
+      });
+
+      test('updateReceipt refuses to overwrite the Kilometers row', () {
+        expect(
+          () => engine.updateReceipt(engine.findKilometersRow()!, const ReceiptInput(subtotal: 1)),
+          throwsArgumentError,
+        );
+      });
+
+      test('updateDrivingDetail overwrites the given row and recalculates the Kilometers row', () {
+        engine.writeDrivingDetail(date: DateTime(2026, 8, 10), trip: 'Site A to Site B', km: 42.5);
+        engine.writeDrivingDetail(date: DateTime(2026, 8, 12), trip: 'Site C', km: 10);
+        final target = engine.listDrivingDetails().first;
+
+        engine.updateDrivingDetail(target.row, date: DateTime(2026, 8, 10), trip: 'Site A to Site B (corrected)', km: 100);
+
+        final trips = engine.listDrivingDetails();
+        expect(trips.length, 2, reason: 'editing must not add or remove rows');
+        expect(trips.first.trip, 'Site A to Site B (corrected)');
+        expect(trips.first.km, 100.0);
+        expect(engine.sumDrivingDetailsKm(), 110.0); // 100 + 10, KM total recalculated
+        expect(textOf(sheet.cell(CellIndex.indexByString('B${engine.findKilometersRow()}')).value),
+            'Kilometers (110)');
+      });
+    });
   });
 
   group('TimesheetEngine', () {
