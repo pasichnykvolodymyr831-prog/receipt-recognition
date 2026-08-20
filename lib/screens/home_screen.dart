@@ -113,7 +113,11 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          PeriodActionTiles(period: current, onChanged: _reload),
+          // The current period's files always exist by the time this
+          // builds -- prepareCurrentPeriod's ensureFilesExist already ran
+          // in _load() above -- so this is a known constant, not a value
+          // worth an extra file-existence read to recompute (Пакет 10).
+          PeriodActionTiles(period: current, onChanged: _reload, filesExist: true, allowAdding: true),
           Card(
             child: ListTile(
               leading: const Icon(Icons.history),

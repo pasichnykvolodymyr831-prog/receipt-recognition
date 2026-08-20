@@ -25,6 +25,18 @@ class ShareSaveScreen extends StatefulWidget {
 class _ShareSaveScreenState extends State<ShareSaveScreen> {
   _FileChoice _choice = _FileChoice.both;
   bool _busy = false;
+  late Future<bool> _filesExistFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    // Section 12/14: reached normally only through an enabled
+    // PeriodActionTiles tile, which already implies files exist -- this is
+    // the defensive "refuse on entry with an explanation" backstop the
+    // plan calls for, for any other path that might reach this screen
+    // (Пакет 10).
+    _filesExistFuture = PeriodFileManager().filesExist(widget.period);
+  }
 
   Future<List<File>> _selectedFiles() async {
     final fileManager = PeriodFileManager();
@@ -84,41 +96,68 @@ class _ShareSaveScreenState extends State<ShareSaveScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(t(context, 'shareSave.title'))),
-      body: _busy
-          ? const Center(child: CircularProgressIndicator())
-          : RadioGroup<_FileChoice>(
-              groupValue: _choice,
-              onChanged: (v) => setState(() => _choice = v!),
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  RadioListTile<_FileChoice>(
-                    title: Text(t(context, 'shareSave.mileageReport')),
-                    value: _FileChoice.mileage,
-                  ),
-                  RadioListTile<_FileChoice>(
-                    title: Text(t(context, 'shareSave.timesheet')),
-                    value: _FileChoice.timesheet,
-                  ),
-                  RadioListTile<_FileChoice>(
-                    title: Text(t(context, 'shareSave.bothFiles')),
-                    value: _FileChoice.both,
-                  ),
-                  const SizedBox(height: 24),
-                  FilledButton.icon(
-                    onPressed: _share,
-                    icon: const Icon(Icons.ios_share),
-                    label: Text(t(context, 'shareSave.share')),
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: _saveToDevice,
-                    icon: const Icon(Icons.save_alt),
-                    label: Text(t(context, 'shareSave.saveToDevice')),
-                  ),
-                ],
+      body: FutureBuilder<bool>(
+        future: _filesExistFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          // See PeriodDetailScreen's identical guard in
+          // period_archive_screen.dart for why a real error must not be
+          // conflated with "files removed" (Пакет 10, code-review
+          // 2026-08-19).
+          if (snapshot.hasError) {
+            return Center(child: Text('${t(context, 'home.errorPrefix')} ${snapshot.error}'));
+          }
+          if (snapshot.data != true) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(t(context, 'period.filesUnavailableMessage'), textAlign: TextAlign.center),
               ),
-            ),
+            );
+          }
+          return _buildContent(context);
+        },
+      ),
     );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    return _busy
+        ? const Center(child: CircularProgressIndicator())
+        : RadioGroup<_FileChoice>(
+            groupValue: _choice,
+            onChanged: (v) => setState(() => _choice = v!),
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                RadioListTile<_FileChoice>(
+                  title: Text(t(context, 'shareSave.mileageReport')),
+                  value: _FileChoice.mileage,
+                ),
+                RadioListTile<_FileChoice>(
+                  title: Text(t(context, 'shareSave.timesheet')),
+                  value: _FileChoice.timesheet,
+                ),
+                RadioListTile<_FileChoice>(
+                  title: Text(t(context, 'shareSave.bothFiles')),
+                  value: _FileChoice.both,
+                ),
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  onPressed: _share,
+                  icon: const Icon(Icons.ios_share),
+                  label: Text(t(context, 'shareSave.share')),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: _saveToDevice,
+                  icon: const Icon(Icons.save_alt),
+                  label: Text(t(context, 'shareSave.saveToDevice')),
+                ),
+              ],
+            ),
+          );
   }
 }

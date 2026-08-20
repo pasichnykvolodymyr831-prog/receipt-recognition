@@ -234,6 +234,21 @@ const Map<String, Map<String, String>> _strings = {
     'ru': 'На этом устройстве пока нет прошлых периодов.',
   },
 
+  // Shared between period_archive_screen.dart's PeriodDetailScreen and
+  // share_save_screen.dart -- both need the exact same explanation for the
+  // exact same situation (Пакет 10, code-review 2026-08-19: previously two
+  // separately-maintained keys with byte-identical text, a drift risk).
+  'period.filesUnavailableMessage': {
+    'en': "This period's Excel files are no longer on this device, per your "
+        'file retention setting in Settings.',
+    'ru': 'Excel-файлов этого периода больше нет на устройстве -- согласно '
+        'настройке хранения файлов в Настройках.',
+  },
+  'periodActions.filesUnavailable': {
+    'en': 'Files not available for this period',
+    'ru': 'Файлы этого периода недоступны',
+  },
+
   'receiptList.title': {'en': 'Receipts', 'ru': 'Чеки'},
   'receiptList.empty': {'en': 'No receipts yet.', 'ru': 'Чеков пока нет.'},
   'receiptList.noDescription': {'en': '(no description)', 'ru': '(без описания)'},

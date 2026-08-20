@@ -88,6 +88,20 @@ class PeriodRepository {
   List<PayrollPeriod> periodsWithFutureDue(List<PayrollPeriod> periods, DateTime now) =>
       periods.where((p) => p.due.isAfter(now)).toList();
 
+  /// Periods (from [periods], excluding [current]) that ended before
+  /// [current] started, sorted descending by [PayrollPeriod.start] (most
+  /// recent first) -- backs the period archive view (section 5/14, Пакет
+  /// 10). Deliberately relative to [current]'s own start, not wall-clock
+  /// `DateTime.now()` -- consistent with how [findCurrent] and
+  /// [periodsAfter] already reason about period ordering, so a period is
+  /// "past" the same way everywhere in the app, not by two different
+  /// definitions depending on which screen asks.
+  List<PayrollPeriod> pastPeriods(List<PayrollPeriod> periods, PayrollPeriod current) {
+    final past = periods.where((p) => p.key != current.key && p.end.isBefore(current.start)).toList();
+    past.sort((a, b) => b.start.compareTo(a.start));
+    return past;
+  }
+
   /// Finds the period whose [PayrollPeriod.fileId] matches [fileId] --
   /// resolves a due-date reminder notification's payload back to a period
   /// (section 5: tapping the reminder opens that period).

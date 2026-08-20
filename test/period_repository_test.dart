@@ -79,6 +79,66 @@ void main() {
     });
   });
 
+  group('pastPeriods (Пакет 10, code-review 2026-08-19: extracted from period_archive_screen.dart '
+      'for the same reason as periodsAfter/periodsWithFutureDue -- a named, independently-testable filter)', () {
+    test('keeps periods that ended before the current period started, excludes the current one', () {
+      final repo = PeriodRepository();
+      final past = _period('2026-07-09', '2026-07-23');
+      final current = _period('2026-08-09', '2026-08-23');
+
+      final result = repo.pastPeriods([past, current], current);
+
+      expect(result, [past]);
+    });
+
+    test('sorts results descending by start (most recent first)', () {
+      final repo = PeriodRepository();
+      final oldest = _period('2026-06-09', '2026-06-23');
+      final middle = _period('2026-06-24', '2026-07-08');
+      final newest = _period('2026-07-09', '2026-07-23');
+      final current = _period('2026-08-09', '2026-08-23');
+
+      final result = repo.pastPeriods([middle, oldest, newest], current);
+
+      expect(result, [newest, middle, oldest]);
+    });
+
+    test('a period is past relative to the current period\'s own start, not wall-clock DateTime.now() -- '
+        'regression test for the pre-extraction inline filter which reasoned the same way, now proven '
+        'independent of when the test actually runs', () {
+      final repo = PeriodRepository();
+      // "current" is set far in the future relative to the real clock --
+      // if pastPeriods secretly compared against DateTime.now() instead of
+      // current.start, this period (which ends after any realistic "now"
+      // but well before current.start) would wrongly be excluded.
+      final period = _period('2030-01-09', '2030-01-23');
+      final currentFarAhead = _period('2031-08-09', '2031-08-23');
+
+      expect(repo.pastPeriods([period, currentFarAhead], currentFarAhead), [period]);
+    });
+
+    test('a period ending exactly on the current period\'s start is not past (not strictly before)', () {
+      final repo = PeriodRepository();
+      final current = _period('2026-08-09', '2026-08-23');
+      final adjacent = PayrollPeriod(
+        key: 'adjacent',
+        start: DateTime(2026, 7, 24),
+        end: current.start,
+        due: current.start,
+      );
+
+      expect(repo.pastPeriods([adjacent, current], current), isEmpty);
+    });
+
+    test('empty when there are no periods before the current one', () {
+      final repo = PeriodRepository();
+      final current = _period('2026-08-09', '2026-08-23');
+      final future = _period('2026-08-24', '2026-09-08');
+
+      expect(repo.pastPeriods([current, future], current), isEmpty);
+    });
+  });
+
   group('findByFileId (Пакет 8: resolve a tapped reminder notification back to its period)', () {
     test('finds the period whose fileId matches', () {
       final repo = PeriodRepository();

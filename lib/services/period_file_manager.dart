@@ -221,17 +221,6 @@ class PeriodFileManager {
     if (await backup.exists()) await backup.delete();
   }
 
-  /// Lists periods (from [allPeriods]) that currently have files on disk,
-  /// most recent first -- backs the period archive view (section 14).
-  Future<List<PayrollPeriod>> listPeriodsWithFiles(List<PayrollPeriod> allPeriods) async {
-    final result = <PayrollPeriod>[];
-    for (final period in allPeriods) {
-      if (await filesExist(period)) result.add(period);
-    }
-    result.sort((a, b) => b.start.compareTo(a.start));
-    return result;
-  }
-
   /// Section 5: finds the file matching `<kind>_<fileId>.xlsx` in [dir],
   /// tolerating any (or no) prefix ending in `_` -- a Settings name change
   /// must never orphan a file created under the old name, and files created
