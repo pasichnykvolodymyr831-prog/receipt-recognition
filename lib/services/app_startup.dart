@@ -96,10 +96,14 @@ class AppStartupService {
 
   /// Section 5: "при каждом старте... для периодов с ненаступившим сроком"
   /// -- (re)schedules the due-date reminder for every period whose due date
-  /// hasn't passed yet, not just the current one.
-  Future<void> rescheduleAllReminders(List<PayrollPeriod> allPeriods) async {
+  /// hasn't passed yet, not just the current one. [languageCode] is only
+  /// threaded through to [NotificationService.scheduleDueReminder]'s text --
+  /// no cycle resolution needed here (Пакет 6 of whimsical-booping-
+  /// salamander.md: that decision lives entirely inside scheduleDueReminder,
+  /// off `period.start.day` alone).
+  Future<void> rescheduleAllReminders(List<PayrollPeriod> allPeriods, String languageCode) async {
     for (final period in periodRepo.periodsWithFutureDue(allPeriods, DateTime.now())) {
-      await notificationService.scheduleDueReminder(period);
+      await notificationService.scheduleDueReminder(period, languageCode: languageCode);
     }
   }
 

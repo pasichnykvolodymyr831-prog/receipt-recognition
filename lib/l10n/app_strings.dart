@@ -275,13 +275,29 @@ const Map<String, Map<String, String>> _strings = {
 
   'tripList.title': {'en': 'Trips', 'ru': 'Поездки'},
   'tripList.empty': {'en': 'No trips yet.', 'ru': 'Поездок пока нет.'},
+
+  // NotificationService has no BuildContext to read AppLocale from -- it
+  // calls [tForLanguage] directly with the Settings language instead
+  // (whimsical-booping-salamander.md, Пакет 6). The body text splits on
+  // whether the reminder's period is a "24-8" cycle-opening half (Mileage
+  // Report isn't due yet for it specifically -- accounting only accepts it
+  // every 4 weeks, see MileageCycle) or a "9-23" closing half (its own due
+  // date IS the whole cycle's due, MileageCycle.due reads secondHalf.due).
+  'notification.dueReminderTimesheetOnly': {
+    'en': 'Timesheet is due soon.',
+    'ru': 'Скоро срок сдачи Timesheet.',
+  },
+  'notification.dueReminderBoth': {
+    'en': 'Mileage Report and Timesheet are due soon.',
+    'ru': 'Скоро срок сдачи Mileage Report и Timesheet.',
+  },
 };
 
-/// Looks up [key] in the current language (from the nearest [AppLocale]),
-/// falling back to English, then to the key itself if truly missing.
-/// Pass [params] to substitute `{name}`-style placeholders.
-String t(BuildContext context, String key, [Map<String, String>? params]) {
-  final languageCode = AppLocale.of(context).languageCode;
+/// Looks up [key] in [languageCode], falling back to English, then to the
+/// key itself if truly missing. The context-free half of [t] -- for the
+/// rare caller (like [NotificationService]) that can't reach a
+/// [BuildContext]/[AppLocale] at all.
+String tForLanguage(String languageCode, String key, [Map<String, String>? params]) {
   final entry = _strings[key];
   var value = entry?[languageCode] ?? entry?['en'] ?? key;
   if (params != null) {
@@ -290,6 +306,13 @@ String t(BuildContext context, String key, [Map<String, String>? params]) {
     }
   }
   return value;
+}
+
+/// Looks up [key] in the current language (from the nearest [AppLocale]),
+/// falling back to English, then to the key itself if truly missing.
+/// Pass [params] to substitute `{name}`-style placeholders.
+String t(BuildContext context, String key, [Map<String, String>? params]) {
+  return tForLanguage(AppLocale.of(context).languageCode, key, params);
 }
 
 /// Localized label for the current phase of a period-file save (see

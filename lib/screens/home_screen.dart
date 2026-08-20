@@ -41,7 +41,7 @@ class _HomeScreenState extends State<HomeScreen> {
         data.allPeriods,
         onNotificationTap: widget.onNotificationTap,
       );
-      await _startup.rescheduleAllReminders(data.allPeriods);
+      await _startup.rescheduleAllReminders(data.allPeriods, data.settings.languageCode);
       final showReminder = await _startup.shouldShowLowPeriodsReminder(data.allPeriods, data.current!);
       if (showReminder && mounted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {

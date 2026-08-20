@@ -2,6 +2,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
+import '../l10n/app_strings.dart';
 import '../models/payroll_period.dart';
 
 /// Wraps flutter_local_notifications for the section-5 "due date - 2 days"
@@ -51,7 +52,15 @@ class NotificationService {
   /// every app start / period detection -- re-scheduling with the same id
   /// replaces any previous reminder for this period. Uses [period.due], not
   /// [PayrollPeriod.weekendAltDue] (section 5).
-  Future<void> scheduleDueReminder(PayrollPeriod period) async {
+  ///
+  /// The body text depends on which half of a Mileage cycle [period] is
+  /// (whimsical-booping-salamander.md, Пакет 6): a "24-8" (cycle-opening)
+  /// period's own due date is only ever a Timesheet deadline -- accounting
+  /// accepts the Mileage Report only every 4 weeks (see `MileageCycle`), so
+  /// it isn't due yet for this specific period. A "9-23" (closing) period's
+  /// due date IS the whole cycle's due (`MileageCycle.due` reads
+  /// `secondHalf.due`), so both are due together.
+  Future<void> scheduleDueReminder(PayrollPeriod period, {required String languageCode}) async {
     final fireAt = period.due.subtract(const Duration(days: 2));
     if (fireAt.isBefore(DateTime.now())) return;
 
@@ -65,11 +74,14 @@ class NotificationService {
       iOS: DarwinNotificationDetails(),
     );
 
+    final bodyKey =
+        period.start.day >= 24 ? 'notification.dueReminderTimesheetOnly' : 'notification.dueReminderBoth';
+
     await _plugin.zonedSchedule(
       id: _idFor(period),
       scheduledDate: tz.TZDateTime.from(fireAt, tz.local),
       title: 'ExpenseFlow',
-      body: 'Mileage Report and Timesheet are due soon.',
+      body: tForLanguage(languageCode, bodyKey),
       notificationDetails: details,
       androidScheduleMode: AndroidScheduleMode.inexact,
       payload: period.fileId,
