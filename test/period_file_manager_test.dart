@@ -340,45 +340,6 @@ void main() {
     });
   });
 
-  group('writeRateIfFileExists (Пакет 31: shared rate-change file-write step; '
-      'takes a MileageCycle as of Пакет 2 of whimsical-booping-salamander.md)', () {
-    late Directory docsDir;
-
-    setUp(() {
-      docsDir = Directory.systemTemp.createTempSync('period_file_manager_rate_docs');
-      PathProviderPlatform.instance = _FakePathProviderPlatform(docsDir.path);
-    });
-
-    tearDown(() {
-      docsDir.deleteSync(recursive: true);
-    });
-
-    test('writes the new rate to G1 when the file already exists', () async {
-      await PeriodFileManager().ensureMileageFileExists(cycle, AppSettings.defaults.copyWith(kmRate: 0.56));
-
-      await PeriodFileManager().writeRateIfFileExists(cycle, 0.60);
-
-      final file = await PeriodFileManager().mileageReportFile(cycle);
-      final excel = Excel.decodeBytes(normalizeXlsxRelationshipTargets(await file.readAsBytes()));
-      final g1 = excel.sheets['Driving Details']!.cell(CellIndex.indexByString('G1')).value;
-      expect((g1 as DoubleCellValue).value, closeTo(0.60, 1e-9));
-    });
-
-    test('is a no-op when the file does not exist yet (cycle not created)', () async {
-      // No ensureMileageFileExists call -- the file genuinely does not exist.
-      await PeriodFileManager().writeRateIfFileExists(cycle, 0.60);
-
-      final file = await PeriodFileManager().mileageReportFile(cycle);
-      expect(await file.exists(), false, reason: 'must not create the file as a side effect');
-    });
-
-    test('is a no-op when the cycle is null (period not yet paired)', () async {
-      await PeriodFileManager().writeRateIfFileExists(null, 0.60);
-      // Nothing to assert on disk -- the point is this simply doesn't
-      // throw and doesn't touch anything, with no file resolvable at all.
-    });
-  });
-
   group('writeHeaderIfFilesExist (Пакет 9: Settings name/phone propagation; '
       'takes an optional MileageCycle as of Пакет 2 of whimsical-booping-salamander.md)', () {
     late Directory docsDir;

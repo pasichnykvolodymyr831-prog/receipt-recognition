@@ -160,11 +160,6 @@ class _WriteDrivingDetailOp extends _MileageOp {
   });
 }
 
-class _ChangeRateOp extends _MileageOp {
-  final double newRate;
-  const _ChangeRateOp(this.newRate);
-}
-
 class _UpdateReceiptOp extends _MileageOp {
   final int row;
   final ReceiptInput receipt;
@@ -236,8 +231,6 @@ void _mileageIsolateEntry(_MileageRequest req) {
           periodKmRate: o.periodKmRate,
           settingsDefaultRate: o.settingsDefaultRate,
         );
-      case _ChangeRateOp o:
-        engine.changeRate(o.newRate);
       case _UpdateReceiptOp o:
         engine.updateReceipt(o.row, o.receipt);
       case _UpdateMileageHeaderOp o:
@@ -432,33 +425,6 @@ Future<void> saveMileageDrivingDetail(
     onPhase: onPhase,
   );
   await logStyleWarnings('saveMileageDrivingDetail', file.uri.pathSegments.last, result.styleWarnings);
-  await _atomicWrite(file, result.bytes);
-}
-
-/// Changes a period file's $/km rate explicitly (section 6.2): writes `G1`
-/// and recomputes the Kilometers row's Travel together, as one operation.
-/// Used by both rate-change paths -- the Settings default (against the
-/// calendar-current period's file) and the period form's own rate field
-/// (against that specific period's file, archival or not) -- the caller
-/// picks which file to target.
-Future<void> changeMileagePeriodRate(
-  File file, {
-  required double newRate,
-  void Function(SaveXlsxPhase)? onPhase,
-  BackupManager? backupManager,
-}) async {
-  onPhase?.call(SaveXlsxPhase.reading);
-  final sourceBytes = await file.readAsBytes();
-  final templateBytes = await _mileageTemplateBytes();
-  await (backupManager ?? _backupManager).backupBeforeWrite(file);
-  final result = await _runMileageIsolate(
-    sourceBytes: sourceBytes,
-    templateBytes: templateBytes,
-    healHiddenSheets: false,
-    op: _ChangeRateOp(newRate),
-    onPhase: onPhase,
-  );
-  await logStyleWarnings('changeMileagePeriodRate', file.uri.pathSegments.last, result.styleWarnings);
   await _atomicWrite(file, result.bytes);
 }
 

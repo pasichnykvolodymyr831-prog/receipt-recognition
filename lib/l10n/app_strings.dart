@@ -100,6 +100,21 @@ const Map<String, Map<String, String>> _strings = {
     'en': 'Rate must be greater than zero, or left blank.',
     'ru': 'Ставка должна быть больше нуля либо оставлена пустой.',
   },
+  // Пакет 5 of whimsical-booping-salamander.md: a "9-23" period's own rate
+  // is never used for Mileage (MileageCycle.kmRate reads only the opening
+  // "24-8" half) -- the field is disabled, not hidden, with this caption.
+  'addPeriod.kmRateNotUsedForThisPeriod': {
+    'en': "This period's own rate isn't used -- the Mileage cycle uses the opening period's rate.",
+    'ru': 'Ставка этого периода не используется — Mileage-цикл берёт ставку открывающего периода.',
+  },
+  // Shown for a "24-8" period whose cycle's Mileage file already exists --
+  // its G1 is filled and permanently authoritative, so editing the rate
+  // here only takes effect for the NEXT cycle, never this already-started
+  // file (section 6.2's retroactive-rate-change path was removed).
+  'addPeriod.kmRateAppliesNextCycle': {
+    'en': "This cycle's Mileage file already exists -- a rate change here applies starting with the next cycle.",
+    'ru': 'Mileage-файл этого цикла уже существует — изменение ставки здесь вступит в силу со следующего цикла.',
+  },
 
   'addReceipt.title': {'en': 'Add receipt', 'ru': 'Добавить чек'},
   'addReceipt.editTitle': {'en': 'Edit receipt', 'ru': 'Редактировать чек'},
@@ -175,6 +190,14 @@ const Map<String, Map<String, String>> _strings = {
     'en': 'Rate must be greater than zero.',
     'ru': 'Ставка должна быть больше нуля.',
   },
+  // Пакет 5 of whimsical-booping-salamander.md: a changed Settings default
+  // rate is never written into an already-created Mileage cycle file (its
+  // G1 is permanently authoritative once filled) -- only a not-yet-created
+  // cycle picks it up, at creation time.
+  'settings.kmRateAppliesNextCycle': {
+    'en': ' The new rate applies starting with the next Mileage cycle -- an already-started file is never changed retroactively.',
+    'ru': ' Новая ставка вступит в силу со следующего Mileage-цикла — уже начатый файл задним числом не меняется.',
+  },
   'settings.retentionTitle': {'en': 'Keep previous Excel files', 'ru': 'Хранение предыдущих Excel-файлов'},
   'settings.retentionNever': {'en': 'Never keep', 'ru': 'Никогда не хранить'},
   'settings.retentionOneMonth': {'en': 'Keep last month', 'ru': 'Хранить последний месяц'},
@@ -211,22 +234,6 @@ const Map<String, Map<String, String>> _strings = {
   // dialog's title while using its own key for the body -- a neutral
   // shared key for the (identical) title is more honest than that mix.
   'mileageReport.noRoomTitle': {'en': 'No room left', 'ru': 'Нет свободных строк'},
-
-  // Shared across any screen that calls changeMileagePeriodRate (settings,
-  // add/edit period) -- same underlying file, same two structural failure
-  // modes, one message each regardless of which screen triggered it.
-  'mileageReport.rateChangeStructureError': {
-    'en': 'Could not change the rate: the period\'s Excel file looks like it was edited outside the app. '
-        'Try restoring it from a backup, or contact the developer if this keeps happening.',
-    'ru': 'Не удалось изменить ставку: файл периода похож на изменённый вне приложения. '
-        'Попробуйте восстановить его из резервной копии; если повторяется — обратитесь к разработчику.',
-  },
-  'mileageReport.rateChangeRowOccupiedError': {
-    'en': 'Could not change the rate: the file is in an unexpected state right now. '
-        'Try again in a moment; if this keeps happening, contact the developer.',
-    'ru': 'Не удалось изменить ставку: файл сейчас в неожиданном состоянии. '
-        'Попробуйте ещё раз чуть позже; если повторяется — обратитесь к разработчику.',
-  },
 
   'archive.title': {'en': 'Past periods', 'ru': 'Прошлые периоды'},
   'archive.empty': {

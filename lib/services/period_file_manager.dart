@@ -75,35 +75,11 @@ class PeriodFileManager {
     return existing ?? File('${dir.path}/Timesheet_${period.fileId}.xlsx');
   }
 
-  /// Writes [newRate] to [cycle]'s Mileage Report file (`G1` + Kilometers
-  /// row Travel, via `changeMileagePeriodRate`) if [cycle] is known and
-  /// that file already exists -- a no-op otherwise, since a cycle that
-  /// hasn't formed yet (or whose file hasn't been created yet) will pick up
-  /// the new rate on its own at creation time (section 6.2's resolve-rate
-  /// priority rule already handles that case).
-  ///
-  /// Both rate-change UI paths (Settings default change, the period form's
-  /// own rate field) share this exact step -- previously each screen
-  /// implemented it independently with near-identical code, risking the
-  /// two copies silently diverging on a future fix. The caller is still
-  /// responsible for persisting the new rate to [PeriodRepository]
-  /// **after** this returns successfully, never before (section 6.2:
-  /// "никогда только одно из двух" -- the file must never fail to update
-  /// while `period.kmRate` already claims the new value).
-  Future<void> writeRateIfFileExists(MileageCycle? cycle, double newRate) async {
-    if (cycle == null) return;
-    final file = await mileageReportFile(cycle);
-    if (await file.exists()) {
-      await changeMileagePeriodRate(file, newRate: newRate);
-    }
-  }
-
   /// Rewrites [period]'s Timesheet C2/C6, and (when [cycle] is known) its
   /// Mileage cycle's B3 (section 9: a Settings employee name/phone change
   /// propagates to the current period's file immediately) -- a no-op for a
   /// file that hasn't been created yet, since it will pick up the current
-  /// Settings name/phone on its own at creation time. Mirrors
-  /// [writeRateIfFileExists]'s existence-gated pattern.
+  /// Settings name/phone on its own at creation time.
   Future<void> writeHeaderIfFilesExist(
     PayrollPeriod period, {
     MileageCycle? cycle,

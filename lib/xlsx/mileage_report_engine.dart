@@ -208,22 +208,6 @@ class MileageReportEngine {
   /// and rewrite the file on every launch.
   static bool ratesEqual(double a, double b) => (a - b).abs() < 1e-9;
 
-  /// Explicit rate change (section 6.2): writes the new rate into `G1` and
-  /// recomputes the Kilometers row's Travel to match, as a single atomic
-  /// operation -- distinct from [resolveAndSyncRate], which only ever
-  /// writes `G1` when it finds it empty. Used by both rate-change paths
-  /// (Settings default, or the period form's own rate field) -- the caller
-  /// decides which period's file this runs against.
-  void changeRate(double newRate) {
-    final kmRow = findKilometersRow();
-    if (kmRow == null) {
-      throw const MileageReportStructureException(
-          'No "Kilometers (" row found -- period file was not initialized correctly.');
-    }
-    writeRate(newRate);
-    _writeKilometersRowFields(kmRow, kmTotal: sumDrivingDetailsKm(), rate: newRate);
-  }
-
   void _writeKilometersRowFields(int kmRow, {required double kmTotal, required double rate}) {
     setCellValue(_sheet, 'B$kmRow', TextCellValue('Kilometers (${formatKmCount(kmTotal)})'));
     setCellValue(_sheet, 'E$kmRow', DoubleCellValue(round2(kmTotal * rate)));

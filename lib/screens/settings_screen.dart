@@ -87,30 +87,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
       await _repo.save(newSettings);
 
-      // Section 6.2, first rate-change path: a changed Settings default
-      // updates the calendar-current period's own km_rate AND its file's G1
-      // together -- future periods pick up the new default at creation time
-      // on their own, so only the current one needs updating here. The file
-      // write happens BEFORE the period-repo persist so a failed file write
-      // (structure error, occupied row, integrity failure -- all real
-      // possibilities per section 13) can never leave period.kmRate and the
-      // file's G1 silently diverged (section 6.2: "never only one of the
-      // two") -- on failure, period.kmRate simply stays whatever it was.
+      // Section 6.2 / whimsical-booping-salamander.md Пакет 5: a changed
+      // Settings default rate is no longer written into any Mileage file --
+      // once a cycle's file exists, its G1 is permanently authoritative
+      // (MileageReportEngine.resolveAndSyncRate never revisits it). Still
+      // worth persisting on the calendar-current period specifically: it
+      // matters if that period is an orphaned "24-8" half whose cycle
+      // hasn't formed a pair / been created yet -- the new rate will be
+      // picked up at that later creation time on its own.
+      var rateChangeWarning = false;
       if (!MileageReportEngine.ratesEqual(_originalKmRate, newKmRate)) {
         final periodRepo = PeriodRepository();
         final periods = await periodRepo.loadAll();
         final current = periodRepo.findCurrent(periods, DateTime.now());
         if (current != null) {
-          // TODO(whimsical-booping-salamander.md, Пакет 5): this still
-          // writes the rate straight into the current Mileage cycle's file
-          // (if any) -- the plan's "changes always apply from next cycle
-          // only, with a warning, an already-started file is never
-          // rewritten retroactively" behavior isn't implemented yet.
-          final cycle = periodRepo.mileageCycleFor(current, periods);
-          await PeriodFileManager().writeRateIfFileExists(cycle, newKmRate);
           await periodRepo.updatePeriod(current.copyWith(kmRate: newKmRate));
         }
         _originalKmRate = newKmRate;
+        rateChangeWarning = true;
       }
 
       // Section 9/11: a changed employee name/phone propagates to the
@@ -137,17 +131,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // Language is already applied live by the segmented button's
       // onSelectionChanged -- nothing left to do here for it.
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t(context, 'settings.saved'))));
-      }
-    } on MileageReportStructureException {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(t(context, 'mileageReport.rateChangeStructureError'))));
-      }
-    } on MileageReportRowOccupiedException {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(t(context, 'mileageReport.rateChangeRowOccupiedError'))));
+        final message = rateChangeWarning
+            ? t(context, 'settings.saved') + t(context, 'settings.kmRateAppliesNextCycle')
+            : t(context, 'settings.saved');
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
       }
     } catch (e) {
       if (mounted) {

@@ -4,10 +4,8 @@ import '../l10n/app_strings.dart';
 import '../models/payroll_period.dart';
 import '../services/period_file_manager.dart';
 import '../services/period_repository.dart';
-import '../services/settings_repository.dart';
 import '../utils/number_input.dart';
 import '../utils/time_format.dart';
-import '../xlsx/mileage_report_engine.dart';
 
 /// The manual "add / edit period" form (section 5). Used both from Settings
 /// and as a blocking flow when the user has run past the last known period.
@@ -52,9 +50,21 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
   String? _error;
   bool _saving = false;
 
+  /// Whether this period's rate field could actually still change anything
+  /// for an already-existing Mileage cycle -- resolved once at load, from
+  /// [widget.existing]'s ORIGINAL shape/pairing (whimsical-booping-
+  /// salamander.md, Пакет 5). Deliberately not re-resolved live as the user
+  /// edits Start -- re-deriving a whole cycle pairing on every date edit
+  /// would be a lot of machinery for a rare edge case (editing Start across
+  /// the day-24 boundary of an existing period); [_isFirstHalfShaped] below
+  /// still reacts live to that edit for the field's enabled/disabled state,
+  /// just not this specific "already has a file" hint.
+  late final Future<bool> _cycleMileageFileAlreadyExistsFuture;
+
   @override
   void initState() {
     super.initState();
+    _cycleMileageFileAlreadyExistsFuture = _resolveCycleMileageFileAlreadyExists();
     final existing = widget.existing;
     if (existing != null) {
       _start = existing.start;
@@ -87,6 +97,22 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
     _kmRateController.dispose();
     super.dispose();
   }
+
+  Future<bool> _resolveCycleMileageFileAlreadyExists() async {
+    final existing = widget.existing;
+    if (existing == null || existing.start.day < 24) return false;
+    final cycle = PeriodRepository().mileageCycleFor(existing, widget.existingPeriods);
+    if (cycle == null) return false;
+    return (await PeriodFileManager().mileageReportFile(cycle)).exists();
+  }
+
+  /// Whether [_start] currently makes this a "24-8"-shaped (cycle-opening)
+  /// period -- only periods of this shape have a rate that means anything
+  /// for Mileage (`MileageCycle.kmRate` reads it from `firstHalf` only). A
+  /// "9-23" period's own rate field is disabled in the form below, not
+  /// hidden (whimsical-booping-salamander.md, Пакет 5) -- hiding a field
+  /// that might already hold a saved value would look like data loss.
+  bool get _isFirstHalfShaped => _start.day >= 24;
 
   Future<void> _pickDate(DateTime initial, void Function(DateTime) onPicked) async {
     final picked = await showDatePicker(
@@ -205,44 +231,16 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
         kmRate: _kmRate,
       );
 
-      // Section 6.2, second rate-change path: editing an existing period's
-      // own rate field updates G1 + Travel in THAT period's file
-      // specifically (including an archival one) -- distinct from the
-      // Settings-default path (settings_screen.dart), which only ever
-      // touches the current period. A cleared field (back to "use the
-      // default") still needs G1 updated -- otherwise it would keep
-      // whatever explicit rate was there before, permanently, since a
-      // filled G1 is normally authoritative. The file write happens BEFORE
-      // the period-repo persist below so a failed file write can never
-      // leave period.kmRate and the file's G1 silently diverged (section
-      // 6.2: "never only one of the two").
-      final oldRate = widget.existing?.kmRate;
-      final newRate = period.kmRate;
-      final rateChanged = widget.existing != null &&
-          ((oldRate == null) != (newRate == null) ||
-              (oldRate != null && newRate != null && !MileageReportEngine.ratesEqual(oldRate, newRate)));
-      if (rateChanged) {
-        final effectiveRate = newRate ?? (await SettingsRepository().load()).kmRate;
-        // TODO(whimsical-booping-salamander.md, Пакет 5): this still writes
-        // the rate straight into the edited period's Mileage cycle file (if
-        // any) -- the plan's "changes always apply from next cycle only,
-        // with a warning" behavior, and disabling this field for "9-23"
-        // periods, aren't implemented yet.
-        //
-        // Resolves the cycle against widget.existingPeriods with THIS
-        // period's own fresh (possibly just-edited) dates substituted in --
-        // not the stale pre-edit copy that list still carries under the
-        // same key -- so a date edit that changes which half [period] is
-        // (or its pairing) is reflected immediately, not one save behind.
-        final periodsForCycle = [
-          for (final p in widget.existingPeriods)
-            if (p.key != period.key) p,
-          period,
-        ];
-        final cycle = PeriodRepository().mileageCycleFor(period, periodsForCycle);
-        await PeriodFileManager().writeRateIfFileExists(cycle, effectiveRate);
-      }
-
+      // Section 6.2 / whimsical-booping-salamander.md Пакет 5: editing an
+      // existing period's own rate field no longer writes into any Mileage
+      // file directly -- once a cycle's file exists, its G1 is
+      // authoritative forever (MileageReportEngine.resolveAndSyncRate never
+      // revisits it). Persisting the new value on [period] here still
+      // matters for a cycle that hasn't been created yet (this period is
+      // an orphaned "24-8" half awaiting its "9-23" partner, or the cycle
+      // simply hasn't been created yet) -- it'll be picked up at creation
+      // time on its own. The form's inline hints (see build()) tell the
+      // user when a change here won't affect anything that already exists.
       final repo = PeriodRepository();
       if (widget.existing != null) {
         await repo.updatePeriod(period);
@@ -255,10 +253,6 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
       if (Navigator.of(context).canPop()) {
         Navigator.of(context).pop(period);
       }
-    } on MileageReportStructureException {
-      if (mounted) setState(() => _error = t(context, 'mileageReport.rateChangeStructureError'));
-    } on MileageReportRowOccupiedException {
-      if (mounted) setState(() => _error = t(context, 'mileageReport.rateChangeRowOccupiedError'));
     } catch (e) {
       if (mounted) setState(() => _error = t(context, 'addPeriod.saveError', {'error': '$e'}));
     } finally {
@@ -350,12 +344,38 @@ class _AddPeriodScreenState extends State<AddPeriodScreen> {
             const SizedBox(height: 8),
             TextField(
               controller: _kmRateController,
+              enabled: _isFirstHalfShaped,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               decoration: InputDecoration(
                 labelText: t(context, 'addPeriod.kmRateLabel'),
                 hintText: t(context, 'addPeriod.kmRateHint'),
               ),
             ),
+            // Section 6.2 / Пакет 5: disabled (not hidden -- a hidden field
+            // holding a saved value would look like data loss), with an
+            // explanation of why, rather than silently doing nothing.
+            if (!_isFirstHalfShaped)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  t(context, 'addPeriod.kmRateNotUsedForThisPeriod'),
+                  style: const TextStyle(fontStyle: FontStyle.italic, fontSize: 12),
+                ),
+              )
+            else
+              FutureBuilder<bool>(
+                future: _cycleMileageFileAlreadyExistsFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.data != true) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      t(context, 'addPeriod.kmRateAppliesNextCycle'),
+                      style: const TextStyle(fontStyle: FontStyle.italic, fontSize: 12),
+                    ),
+                  );
+                },
+              ),
             const SizedBox(height: 24),
             FilledButton(
               onPressed: _saving ? null : _save,

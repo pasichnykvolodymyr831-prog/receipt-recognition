@@ -4,8 +4,6 @@
 // - The rate-authority priority rule: G1 wins once filled; an empty G1
 //   (old-template files) falls back to period.km_rate / Settings default
 //   and self-heals by writing the result into G1.
-// - Explicit rate changes (changeRate) write G1 and recompute Travel
-//   together.
 // - Rates compare with tolerance, never `==`.
 import 'dart:io';
 
@@ -129,28 +127,6 @@ void main() {
       // The Kilometers row shifted to row 10 (first receipt).
       expect(numberOf(sheet.cell(CellIndex.indexByString('E10')).value), 35.0); // 50 * 0.70
       expect(numberOf(drivingSheet.cell(CellIndex.indexByString('G1')).value), 0.70);
-    });
-  });
-
-  group('changeRate (section 6.2, explicit rate change)', () {
-    setUp(() {
-      engine.writePeriodHeader(periodLabel: 'x', employeeName: 'Truman Homes');
-      engine.initializeKilometersRow(periodEnd: DateTime(2026, 8, 23));
-    });
-
-    test('writes G1 and recomputes the Kilometers row Travel together', () {
-      engine.writeDrivingDetail(date: DateTime(2026, 8, 10), trip: 'Site A', km: 100);
-      expect(numberOf(sheet.cell(CellIndex.indexByString('E8')).value), 56.0); // 100 * 0.56
-
-      engine.changeRate(0.80);
-
-      expect(numberOf(drivingSheet.cell(CellIndex.indexByString('G1')).value), 0.80);
-      expect(numberOf(sheet.cell(CellIndex.indexByString('E8')).value), 80.0); // 100 * 0.80
-    });
-
-    test('throws MileageReportStructureException if the Kilometers row cannot be found', () {
-      sheet.cell(CellIndex.indexByString('B8')).value = TextCellValue('not a km row');
-      expect(() => engine.changeRate(0.80), throwsA(isA<MileageReportStructureException>()));
     });
   });
 }
