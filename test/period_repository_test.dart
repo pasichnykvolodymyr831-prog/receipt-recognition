@@ -57,4 +57,44 @@ void main() {
       expect(end, DateTime(2026, 8, 23));
     });
   });
+
+  group('periodsWithFutureDue (Пакет 8: reschedule reminders for every period, not just current)', () {
+    test('keeps only periods whose due date is still ahead of now', () {
+      final repo = PeriodRepository();
+      final past = _period('2026-06-09', '2026-06-23');
+      final futureA = _period('2026-08-09', '2026-08-23');
+      final futureB = _period('2026-08-24', '2026-09-08');
+      final now = DateTime(2026, 8, 1);
+
+      final result = repo.periodsWithFutureDue([past, futureA, futureB], now);
+
+      expect(result, [futureA, futureB]);
+    });
+
+    test('a period whose due date is exactly now is excluded', () {
+      final repo = PeriodRepository();
+      final period = _period('2026-08-09', '2026-08-23');
+
+      expect(repo.periodsWithFutureDue([period], period.due), isEmpty);
+    });
+  });
+
+  group('findByFileId (Пакет 8: resolve a tapped reminder notification back to its period)', () {
+    test('finds the period whose fileId matches', () {
+      final repo = PeriodRepository();
+      final target = _period('2026-08-09', '2026-08-23');
+      final other = _period('2026-08-24', '2026-09-08');
+
+      final found = repo.findByFileId([other, target], target.fileId);
+
+      expect(found, target);
+    });
+
+    test('returns null when no period matches', () {
+      final repo = PeriodRepository();
+      final period = _period('2026-08-09', '2026-08-23');
+
+      expect(repo.findByFileId([period], '2099-01-01_2099-01-15'), isNull);
+    });
+  });
 }

@@ -11,7 +11,11 @@ import 'period_archive_screen.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  /// Section 5: tapping a due-date reminder notification calls this with
+  /// the tapped period's [PayrollPeriod.fileId] payload.
+  final void Function(String? payload)? onNotificationTap;
+
+  const HomeScreen({super.key, this.onNotificationTap});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -30,7 +34,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<BootstrapData> _load() async {
     final data = await _startup.loadCurrentState();
     if (data.current != null) {
-      await _startup.prepareCurrentPeriod(data.current!, data.settings, data.allPeriods);
+      await _startup.prepareCurrentPeriod(
+        data.current!,
+        data.settings,
+        data.allPeriods,
+        onNotificationTap: widget.onNotificationTap,
+      );
+      await _startup.rescheduleAllReminders(data.allPeriods);
       final showReminder = await _startup.shouldShowLowPeriodsReminder(data.allPeriods, data.current!);
       if (showReminder && mounted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {

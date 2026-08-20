@@ -81,6 +81,23 @@ class PeriodRepository {
     return after;
   }
 
+  /// Periods whose [PayrollPeriod.due] hasn't passed [now] yet (section 5:
+  /// "при каждом старте... для периодов с ненаступившим сроком") -- used to
+  /// decide which periods still need their due-date reminder (re)scheduled,
+  /// not just the current one.
+  List<PayrollPeriod> periodsWithFutureDue(List<PayrollPeriod> periods, DateTime now) =>
+      periods.where((p) => p.due.isAfter(now)).toList();
+
+  /// Finds the period whose [PayrollPeriod.fileId] matches [fileId] --
+  /// resolves a due-date reminder notification's payload back to a period
+  /// (section 5: tapping the reminder opens that period).
+  PayrollPeriod? findByFileId(List<PayrollPeriod> periods, String fileId) {
+    for (final p in periods) {
+      if (p.fileId == fileId) return p;
+    }
+    return null;
+  }
+
   /// Suggests start/end for the next period, continuing the "9-23" /
   /// "24-8th of next month" pattern the existing seed follows (e.g.
   /// 2026-07-24 to 2026-08-08). Purely a pre-fill convenience for the

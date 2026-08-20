@@ -47,10 +47,19 @@ class AppStartupService {
   (DateTime, DateTime) suggestNextPeriodRange(List<PayrollPeriod> periods) =>
       periodRepo.suggestNextPeriodRange(periods);
 
-  /// Creates the current period's files if missing, cleans up old files per
-  /// retention, and (re)schedules its due-date reminder. Call once a
-  /// current period is known (never with a null period).
-  Future<void> prepareCurrentPeriod(PayrollPeriod period, AppSettings settings, List<PayrollPeriod> allPeriods) async {
+  /// Creates the current period's files if missing and cleans up old files
+  /// per retention. Call once a current period is known (never with a null
+  /// period). [onNotificationTap] is wired into the notification plugin's
+  /// tap handler on first call only (subsequent calls are a no-op, per
+  /// [NotificationService.init]) -- reminder scheduling itself is
+  /// [rescheduleAllReminders], called separately since it covers every
+  /// period, not just this one.
+  Future<void> prepareCurrentPeriod(
+    PayrollPeriod period,
+    AppSettings settings,
+    List<PayrollPeriod> allPeriods, {
+    void Function(String? payload)? onNotificationTap,
+  }) async {
     // section 13.5: recover from a crash/kill mid-write before touching the files.
     await backupManager.restoreIfCorrupted(await fileManager.mileageReportFile(period));
     await backupManager.restoreIfCorrupted(await fileManager.timesheetFile(period));
@@ -62,9 +71,17 @@ class AppStartupService {
       retention: settings.retention,
       now: DateTime.now(),
     );
-    await notificationService.init();
+    await notificationService.init(onTap: onNotificationTap);
     await notificationService.requestPermission();
-    await notificationService.scheduleDueReminder(period);
+  }
+
+  /// Section 5: "при каждом старте... для периодов с ненаступившим сроком"
+  /// -- (re)schedules the due-date reminder for every period whose due date
+  /// hasn't passed yet, not just the current one.
+  Future<void> rescheduleAllReminders(List<PayrollPeriod> allPeriods) async {
+    for (final period in periodRepo.periodsWithFutureDue(allPeriods, DateTime.now())) {
+      await notificationService.scheduleDueReminder(period);
+    }
   }
 
   /// Section 5: once 2 or fewer periods remain after the current one, show
