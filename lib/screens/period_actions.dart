@@ -108,7 +108,7 @@ class PeriodActionTiles extends StatelessWidget {
           enabled: filesExist,
           onTap: () {
             Navigator.of(context).push(
-              MaterialPageRoute(builder: (context) => ShareSaveScreen(period: period)),
+              MaterialPageRoute(builder: (context) => ShareSaveScreen.forPeriod(period: period)),
             );
           },
         ),

@@ -42,7 +42,7 @@ class _ExpenseFlowAppState extends State<ExpenseFlowApp> {
     final period = repo.findByFileId(periods, payload);
     if (period != null) {
       _navigatorKey.currentState?.push(
-        MaterialPageRoute(builder: (context) => ShareSaveScreen(period: period)),
+        MaterialPageRoute(builder: (context) => ShareSaveScreen.forPeriod(period: period)),
       );
     }
   }

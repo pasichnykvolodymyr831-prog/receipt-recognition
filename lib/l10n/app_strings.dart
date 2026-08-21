@@ -220,7 +220,6 @@ const Map<String, Map<String, String>> _strings = {
   'shareSave.title': {'en': 'Share / Save', 'ru': 'Поделиться / Сохранить'},
   'shareSave.mileageReport': {'en': 'Mileage Report', 'ru': 'Mileage Report'},
   'shareSave.timesheet': {'en': 'Timesheet', 'ru': 'Timesheet'},
-  'shareSave.bothFiles': {'en': 'Both files', 'ru': 'Оба файла'},
   'shareSave.share': {'en': 'Share', 'ru': 'Поделиться'},
   'shareSave.saveToDevice': {'en': 'Save to device', 'ru': 'Сохранить на устройство'},
   'shareSave.saved': {'en': 'Saved', 'ru': 'Сохранено'},
@@ -240,6 +239,11 @@ const Map<String, Map<String, String>> _strings = {
     'en': 'No past periods on this device yet.',
     'ru': 'На этом устройстве пока нет прошлых периодов.',
   },
+  // MileageCycleDetailScreen's two Timesheet subtiles (Пакет 8b of
+  // whimsical-booping-salamander.md) -- each names its own 2-week half so
+  // the two are distinguishable ("Timesheet" itself stays untranslated, a
+  // proper noun matching the in-file sheet name).
+  'archive.timesheetFor': {'en': 'Timesheet: {label}', 'ru': 'Timesheet: {label}'},
 
   // Shared between period_archive_screen.dart's PeriodDetailScreen and
   // share_save_screen.dart -- both need the exact same explanation for the
@@ -267,6 +271,15 @@ const Map<String, Map<String, String>> _strings = {
         'Add the next payroll period to enable Mileage Report entry here.',
     'ru': 'Этот период ещё не объединён в пару со своим партнёром по Mileage-циклу. '
         'Добавьте следующий период, чтобы включить ввод в Mileage Report здесь.',
+  },
+  // For an archive row that's a lone PayrollPeriod, not a MileageCycle --
+  // it never had (and structurally never can have) a pairing partner, e.g.
+  // the very first period ever recorded (whimsical-booping-salamander.md,
+  // Пакет 8a). Distinct from mileageCycle.notReadyMessage, which is about
+  // a partner that just hasn't been added YET.
+  'archive.orphanedPeriodCaption': {
+    'en': 'Timesheet only -- no Mileage cycle partner',
+    'ru': 'Только Timesheet — нет пары по Mileage-циклу',
   },
 
   'receiptList.title': {'en': 'Receipts', 'ru': 'Чеки'},

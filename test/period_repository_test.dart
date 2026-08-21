@@ -230,6 +230,131 @@ void main() {
     });
   });
 
+  group('pastMileageCycles / pastOrphanedPeriods (Пакет 8a of the 4-week Mileage-cycle plan, '
+      'whimsical-booping-salamander.md: the archive lists past cycles, plus any past period that '
+      'never paired into one, so nothing silently vanishes -- section 5/14\'s standing principle)', () {
+    test('pastMileageCycles keeps cycles that ended before the current cycle started, excludes the current one',
+        () {
+      final repo = PeriodRepository();
+      final pastFirst = _period('2026-06-24', '2026-07-08');
+      final pastSecond = _period('2026-07-09', '2026-07-23');
+      final currentFirst = _period('2026-07-24', '2026-08-08');
+      final currentSecond = _period('2026-08-09', '2026-08-23');
+      final periods = [pastFirst, pastSecond, currentFirst, currentSecond];
+      final currentCycle = repo.mileageCycleFor(currentSecond, periods)!;
+
+      final result = repo.pastMileageCycles(periods, currentSecond, currentCycle);
+
+      expect(result, hasLength(1));
+      expect(result.single.fileId, '2026-06-24_2026-07-23');
+    });
+
+    test('pastMileageCycles sorts results descending by start (most recent first)', () {
+      final repo = PeriodRepository();
+      final oldestFirst = _period('2026-04-24', '2026-05-08');
+      final oldestSecond = _period('2026-05-09', '2026-05-23');
+      final middleFirst = _period('2026-05-24', '2026-06-08');
+      final middleSecond = _period('2026-06-09', '2026-06-23');
+      final newestFirst = _period('2026-06-24', '2026-07-08');
+      final newestSecond = _period('2026-07-09', '2026-07-23');
+      final currentFirst = _period('2026-07-24', '2026-08-08');
+      final currentSecond = _period('2026-08-09', '2026-08-23');
+      final periods = [
+        oldestFirst,
+        oldestSecond,
+        middleFirst,
+        middleSecond,
+        newestFirst,
+        newestSecond,
+        currentFirst,
+        currentSecond,
+      ];
+      final currentCycle = repo.mileageCycleFor(currentSecond, periods)!;
+
+      final result = repo.pastMileageCycles(periods, currentSecond, currentCycle);
+
+      expect(result.map((c) => c.fileId).toList(), [
+        '2026-06-24_2026-07-23',
+        '2026-05-24_2026-06-23',
+        '2026-04-24_2026-05-23',
+      ]);
+    });
+
+    test('pastMileageCycles falls back to currentPeriod.start when currentCycle is null '
+        '(the current period is itself orphaned) -- archive still renders sensibly, not crash or empty', () {
+      final repo = PeriodRepository();
+      final pastFirst = _period('2026-06-24', '2026-07-08');
+      final pastSecond = _period('2026-07-09', '2026-07-23');
+      // A "9-23" period with no preceding "24-8" half -- orphaned, exactly
+      // like the real seed data's very first period.
+      final orphanedCurrent = _period('2026-08-09', '2026-08-23');
+      final periods = [pastFirst, pastSecond, orphanedCurrent];
+
+      expect(repo.mileageCycleFor(orphanedCurrent, periods), isNull, reason: 'sanity: it really is orphaned');
+
+      final result = repo.pastMileageCycles(periods, orphanedCurrent, null);
+
+      expect(result, hasLength(1));
+      expect(result.single.fileId, '2026-06-24_2026-07-23');
+    });
+
+    test('pastMileageCycles is empty when there are no past cycles', () {
+      final repo = PeriodRepository();
+      final currentFirst = _period('2026-07-24', '2026-08-08');
+      final currentSecond = _period('2026-08-09', '2026-08-23');
+      final periods = [currentFirst, currentSecond];
+      final currentCycle = repo.mileageCycleFor(currentSecond, periods)!;
+
+      expect(repo.pastMileageCycles(periods, currentSecond, currentCycle), isEmpty);
+    });
+
+    test('pastOrphanedPeriods finds the real seed-data shape: a past period with no preceding "24-8" half',
+        () {
+      final repo = PeriodRepository();
+      // The actual real-world case: the very first period ever recorded.
+      final theOrphan = _period('2026-03-09', '2026-03-23');
+      final pairedFirst = _period('2026-03-24', '2026-04-08');
+      final pairedSecond = _period('2026-04-09', '2026-04-23');
+      final current = _period('2026-08-09', '2026-08-23');
+      final periods = [theOrphan, pairedFirst, pairedSecond, current];
+
+      final result = repo.pastOrphanedPeriods(periods, current);
+
+      expect(result, [theOrphan]);
+    });
+
+    test('pastOrphanedPeriods excludes periods that DO belong to a past cycle', () {
+      final repo = PeriodRepository();
+      final pairedFirst = _period('2026-06-24', '2026-07-08');
+      final pairedSecond = _period('2026-07-09', '2026-07-23');
+      final current = _period('2026-08-09', '2026-08-23');
+
+      final result = repo.pastOrphanedPeriods([pairedFirst, pairedSecond, current], current);
+
+      expect(result, isEmpty);
+    });
+
+    test('pastOrphanedPeriods excludes the current period even if it is itself orphaned', () {
+      final repo = PeriodRepository();
+      final orphanedCurrent = _period('2026-08-09', '2026-08-23');
+
+      expect(repo.pastOrphanedPeriods([orphanedCurrent], orphanedCurrent), isEmpty);
+    });
+
+    test('pastOrphanedPeriods is empty when every past period pairs into a cycle', () {
+      final repo = PeriodRepository();
+      final pairedFirst = _period('2026-06-24', '2026-07-08');
+      final pairedSecond = _period('2026-07-09', '2026-07-23');
+      final currentFirst = _period('2026-07-24', '2026-08-08');
+      final currentSecond = _period('2026-08-09', '2026-08-23');
+
+      final result =
+          repo.pastOrphanedPeriods([pairedFirst, pairedSecond, currentFirst, currentSecond], currentSecond);
+
+      expect(result, isEmpty);
+    });
+  });
+
   group('findByFileId (Пакет 8: resolve a tapped reminder notification back to its period)', () {
     test('finds the period whose fileId matches', () {
       final repo = PeriodRepository();
