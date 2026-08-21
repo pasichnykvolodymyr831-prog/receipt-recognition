@@ -13,6 +13,7 @@ import 'locale_controller.dart';
 /// screen names always match what's printed in the spreadsheet.
 const Map<String, Map<String, String>> _strings = {
   'common.save': {'en': 'Save', 'ru': 'Сохранить'},
+  'common.saved': {'en': 'Saved', 'ru': 'Сохранено'},
   'common.ok': {'en': 'OK', 'ru': 'ОК'},
   'common.edit': {'en': 'Edit', 'ru': 'Редактировать'},
   'common.cancel': {'en': 'Cancel', 'ru': 'Отмена'},

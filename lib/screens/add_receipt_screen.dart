@@ -15,6 +15,7 @@ import '../services/settings_repository.dart';
 import '../utils/number_input.dart';
 import '../utils/text_input.dart';
 import '../utils/time_format.dart';
+import '../widgets/save_progress_overlay.dart';
 import '../xlsx/mileage_report_engine.dart';
 
 enum _EntryMode { none, ocr, manual }
@@ -36,8 +37,10 @@ class AddReceiptScreen extends StatefulWidget {
 class _AddReceiptScreenState extends State<AddReceiptScreen> {
   _EntryMode _mode = _EntryMode.none;
   bool _editing = false;
-  bool _busy = false;
-  SaveXlsxPhase? _savePhase;
+  // Distinct from _progress.busy: this gates the camera/gallery/OCR step,
+  // which isn't an Excel write and so isn't section 12а's concern.
+  bool _ocrBusy = false;
+  final _progress = SaveProgressController();
 
   DateTime? _date;
   double? _subtotal;
@@ -83,6 +86,7 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
     _descriptionController.dispose();
     _subtotalController.dispose();
     _gstController.dispose();
+    _progress.dispose();
     super.dispose();
   }
 
@@ -93,13 +97,13 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
   }
 
   Future<void> _pickAndScan(ImageSource source) async {
-    setState(() => _busy = true);
+    setState(() => _ocrBusy = true);
     try {
       final picker = ImagePicker();
       final photo = await picker.pickImage(source: source, imageQuality: 85);
       if (!mounted) return;
       if (photo == null) {
-        setState(() => _busy = false);
+        setState(() => _ocrBusy = false);
         return;
       }
 
@@ -133,11 +137,11 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
         _gst = parsed.gst;
         _subtotalController.text = _subtotal?.toStringAsFixed(2) ?? '';
         _gstController.text = _gst?.toStringAsFixed(2) ?? '';
-        _busy = false;
+        _ocrBusy = false;
       });
     } catch (e) {
       if (mounted) {
-        setState(() => _busy = false);
+        setState(() => _ocrBusy = false);
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(t(context, 'addReceipt.ocrError', {'error': '$e'}))));
       }
@@ -216,81 +220,61 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
   }
 
   Future<void> _save() async {
-    if (_busy) return; // guards against a second tap starting a concurrent write
+    if (_progress.busy) return; // guards against a second tap starting a concurrent write
     if (!_validate()) return;
     final subtotal = _editing ? parseDecimal(_subtotalController.text) : _subtotal;
     final gst = _editing ? parseDecimal(_gstController.text) : _gst;
     final description = sanitizeFreeText(_descriptionController.text);
+    final input = ReceiptInput(
+      date: _date,
+      description: description.isEmpty ? null : description,
+      // Section 8: round to 2 decimals here, at the point the value leaves
+      // the screen -- a typed "12.3456" must never reach the file as
+      // anything but 12.35.
+      subtotal: subtotal == null ? null : round2(subtotal),
+      gst: gst == null ? null : round2(gst),
+    );
+    final existing = widget.existing;
 
-    setState(() {
-      _busy = true;
-      _savePhase = SaveXlsxPhase.reading;
-    });
-    try {
-      // Already resolved (and non-null -- the screen is gated on it in
-      // build()) by the time Save is reachable; awaiting the same Future
-      // again just returns the cached result, no re-resolve.
-      final cycle = (await _cycleFuture)!;
-      final fileManager = PeriodFileManager();
-      final file = await fileManager.mileageReportFile(cycle);
-      final settings = await SettingsRepository().load();
-      final input = ReceiptInput(
-        date: _date,
-        description: description.isEmpty ? null : description,
-        // Section 8: round to 2 decimals here, at the point the value
-        // leaves the screen -- a typed "12.3456" must never reach the
-        // file as anything but 12.35.
-        subtotal: subtotal == null ? null : round2(subtotal),
-        gst: gst == null ? null : round2(gst),
-      );
-      void onPhase(SaveXlsxPhase phase) {
-        if (mounted) setState(() => _savePhase = phase);
-      }
+    final ok = await _progress.run(
+      context,
+      (onPhase) async {
+        // Already resolved (and non-null -- the screen is gated on it in
+        // build()) by the time Save is reachable; awaiting the same Future
+        // again just returns the cached result, no re-resolve.
+        final cycle = (await _cycleFuture)!;
+        final fileManager = PeriodFileManager();
+        final file = await fileManager.mileageReportFile(cycle);
+        final settings = await SettingsRepository().load();
 
-      final existing = widget.existing;
-      if (existing != null) {
-        // Section 14: editing writes back to the same row, no Kilometers-
-        // row shift, so the rate parameters writeReceipt needs don't apply.
-        await updateMileageReceipt(file, row: existing.row, receipt: input, onPhase: onPhase);
-      } else {
-        await saveMileageReceipt(
-          file,
-          input,
-          // Section 6.2's priority rule: the CYCLE's own rate wins if set
-          // (fixed on its opening half, not widget.period -- see
-          // MileageCycle.kmRate), otherwise the Settings default -- and the
-          // file's own G1 wins over both if it's already filled (resolved
-          // inside the engine). Using widget.period.kmRate here would be
-          // wrong for the second-half period, whose own kmRate field is no
-          // longer meaningful for Mileage once a cycle is formed.
-          periodKmRate: cycle.kmRate,
-          settingsDefaultRate: settings.kmRate,
-          onPhase: onPhase,
-        );
-      }
-
-      if (mounted) Navigator.of(context).pop(true);
-    } on MileageReportRowsExhaustedException {
-      if (mounted) {
-        setState(() => _busy = false);
-        showDialog<void>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: Text(t(context, 'mileageReport.noRoomTitle')),
-            content: Text(t(context, 'addReceipt.noRoomContent')),
-            actions: [
-              TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(t(context, 'common.ok'))),
-            ],
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _busy = false);
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(t(context, 'addReceipt.saveError', {'error': '$e'}))));
-      }
-    }
+        if (existing != null) {
+          // Section 14: editing writes back to the same row, no Kilometers-
+          // row shift, so the rate parameters writeReceipt needs don't apply.
+          await updateMileageReceipt(file, row: existing.row, receipt: input, onPhase: onPhase);
+        } else {
+          await saveMileageReceipt(
+            file,
+            input,
+            // Section 6.2's priority rule: the CYCLE's own rate wins if set
+            // (fixed on its opening half, not widget.period -- see
+            // MileageCycle.kmRate), otherwise the Settings default -- and
+            // the file's own G1 wins over both if it's already filled
+            // (resolved inside the engine). Using widget.period.kmRate here
+            // would be wrong for the second-half period, whose own kmRate
+            // field is no longer meaningful for Mileage once a cycle is
+            // formed.
+            periodKmRate: cycle.kmRate,
+            settingsDefaultRate: settings.kmRate,
+            onPhase: onPhase,
+          );
+        }
+      },
+      messageFor: (e) => e is MileageReportRowsExhaustedException
+          ? (title: t(context, 'mileageReport.noRoomTitle'), message: t(context, 'addReceipt.noRoomContent'))
+          : (title: null, message: t(context, 'addReceipt.saveError', {'error': '$e'})),
+      successMessage: t(context, 'common.saved'),
+    );
+    if (ok && mounted) Navigator.of(context).pop(true);
   }
 
   @override
@@ -316,28 +300,13 @@ class _AddReceiptScreenState extends State<AddReceiptScreen> {
               ),
             );
           }
-          return _busy
-              ? _buildSaveProgress(context)
-              : _mode == _EntryMode.none
-                  ? _buildEntryChoice()
-                  : _buildConfirmForm();
+          return _ocrBusy
+              ? const Center(child: CircularProgressIndicator())
+              : SaveProgressOverlay(
+                  controller: _progress,
+                  child: _mode == _EntryMode.none ? _buildEntryChoice() : _buildConfirmForm(),
+                );
         },
-      ),
-    );
-  }
-
-  Widget _buildSaveProgress(BuildContext context) {
-    final label = saveXlsxPhaseLabel(context, _savePhase);
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const CircularProgressIndicator(),
-          if (label != null) ...[
-            const SizedBox(height: 16),
-            Text(label),
-          ],
-        ],
       ),
     );
   }

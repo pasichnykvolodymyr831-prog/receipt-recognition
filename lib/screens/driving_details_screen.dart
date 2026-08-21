@@ -10,6 +10,7 @@ import '../services/settings_repository.dart';
 import '../utils/number_input.dart';
 import '../utils/text_input.dart';
 import '../utils/time_format.dart';
+import '../widgets/save_progress_overlay.dart';
 import '../xlsx/mileage_report_engine.dart';
 
 /// Manual Driving Details entry (section 9): Date, Trip, KM. Writes to the
@@ -32,8 +33,7 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
   DateTime _date = DateTime.now();
   final _tripController = TextEditingController();
   final _kmController = TextEditingController();
-  bool _busy = false;
-  SaveXlsxPhase? _savePhase;
+  final _progress = SaveProgressController();
 
   // Section 9: Trip is required, KM must be strictly > 0.
   String? _tripError;
@@ -62,6 +62,7 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
   void dispose() {
     _tripController.dispose();
     _kmController.dispose();
+    _progress.dispose();
     super.dispose();
   }
 
@@ -110,81 +111,60 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
   }
 
   Future<void> _save() async {
-    if (_busy) return; // guards against a second tap starting a concurrent write
+    if (_progress.busy) return; // guards against a second tap starting a concurrent write
     if (!_validate()) return;
     // Section 9: round to 2 decimals here -- a typed "42.567" must never
     // reach the file as anything longer than 42.57.
     final km = round2(parseDecimal(_kmController.text)!);
     final trip = sanitizeFreeText(_tripController.text);
+    final existing = widget.existing;
 
-    setState(() {
-      _busy = true;
-      _savePhase = SaveXlsxPhase.reading;
-    });
-    try {
-      // Already resolved (and non-null -- the screen is gated on it in
-      // build()) by the time Save is reachable; awaiting the same Future
-      // again just returns the cached result, no re-resolve.
-      final cycle = (await _cycleFuture)!;
-      final fileManager = PeriodFileManager();
-      final file = await fileManager.mileageReportFile(cycle);
-      final settings = await SettingsRepository().load();
-      void onPhase(SaveXlsxPhase phase) {
-        if (mounted) setState(() => _savePhase = phase);
-      }
+    final ok = await _progress.run(
+      context,
+      (onPhase) async {
+        // Already resolved (and non-null -- the screen is gated on it in
+        // build()) by the time Save is reachable; awaiting the same Future
+        // again just returns the cached result, no re-resolve.
+        final cycle = (await _cycleFuture)!;
+        final fileManager = PeriodFileManager();
+        final file = await fileManager.mileageReportFile(cycle);
+        final settings = await SettingsRepository().load();
 
-      // Section 6.2's priority rule uses the CYCLE's own rate (fixed on its
-      // opening half, see MileageCycle.kmRate), not widget.period.kmRate --
-      // that field is no longer meaningful for Mileage on the second-half
-      // period once a cycle is formed.
-      final existing = widget.existing;
-      if (existing != null) {
-        // Section 14: editing writes back to the same row -- no free-row
-        // search, unlike saveMileageDrivingDetail.
-        await updateMileageDrivingDetail(
-          file,
-          row: existing.row,
-          date: _date,
-          trip: trip,
-          km: km,
-          periodKmRate: cycle.kmRate,
-          settingsDefaultRate: settings.kmRate,
-          onPhase: onPhase,
-        );
-      } else {
-        await saveMileageDrivingDetail(
-          file,
-          date: _date,
-          trip: trip,
-          km: km,
-          periodKmRate: cycle.kmRate,
-          settingsDefaultRate: settings.kmRate,
-          onPhase: onPhase,
-        );
-      }
-
-      if (mounted) Navigator.of(context).pop(true);
-    } on MileageReportRowsExhaustedException {
-      if (mounted) {
-        setState(() => _busy = false);
-        showDialog<void>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: Text(t(context, 'mileageReport.noRoomTitle')),
-            content: Text(t(context, 'drivingDetails.noRoomContent')),
-            actions: [
-              TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(t(context, 'common.ok'))),
-            ],
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _busy = false);
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(t(context, 'drivingDetails.saveError', {'error': '$e'}))));
-      }
-    }
+        // Section 6.2's priority rule uses the CYCLE's own rate (fixed on
+        // its opening half, see MileageCycle.kmRate), not
+        // widget.period.kmRate -- that field is no longer meaningful for
+        // Mileage on the second-half period once a cycle is formed.
+        if (existing != null) {
+          // Section 14: editing writes back to the same row -- no free-row
+          // search, unlike saveMileageDrivingDetail.
+          await updateMileageDrivingDetail(
+            file,
+            row: existing.row,
+            date: _date,
+            trip: trip,
+            km: km,
+            periodKmRate: cycle.kmRate,
+            settingsDefaultRate: settings.kmRate,
+            onPhase: onPhase,
+          );
+        } else {
+          await saveMileageDrivingDetail(
+            file,
+            date: _date,
+            trip: trip,
+            km: km,
+            periodKmRate: cycle.kmRate,
+            settingsDefaultRate: settings.kmRate,
+            onPhase: onPhase,
+          );
+        }
+      },
+      messageFor: (e) => e is MileageReportRowsExhaustedException
+          ? (title: t(context, 'mileageReport.noRoomTitle'), message: t(context, 'drivingDetails.noRoomContent'))
+          : (title: null, message: t(context, 'drivingDetails.saveError', {'error': '$e'})),
+      successMessage: t(context, 'common.saved'),
+    );
+    if (ok && mounted) Navigator.of(context).pop(true);
   }
 
   @override
@@ -212,53 +192,37 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
               ),
             );
           }
-          return _busy
-              ? _buildSaveProgress(context)
-              : ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    ListTile(
-                      title: Text(t(context, 'addReceipt.date')),
-                      subtitle: Text(dateFmt),
-                      trailing: const Icon(Icons.calendar_today),
-                      onTap: _pickDate,
-                    ),
-                    const Divider(),
-                    TextField(
-                      controller: _tripController,
-                      decoration:
-                          InputDecoration(labelText: t(context, 'drivingDetails.trip'), errorText: _tripError),
-                      maxLength: 300,
-                      onChanged: (_) => setState(() => _tripError = null),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _kmController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: InputDecoration(labelText: t(context, 'drivingDetails.km'), errorText: _kmError),
-                      onChanged: (_) => setState(() => _kmError = null),
-                    ),
-                    const SizedBox(height: 24),
-                    FilledButton(onPressed: _save, child: Text(t(context, 'common.save'))),
-                  ],
-                );
+          return SaveProgressOverlay(
+            controller: _progress,
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                ListTile(
+                  title: Text(t(context, 'addReceipt.date')),
+                  subtitle: Text(dateFmt),
+                  trailing: const Icon(Icons.calendar_today),
+                  onTap: _pickDate,
+                ),
+                const Divider(),
+                TextField(
+                  controller: _tripController,
+                  decoration: InputDecoration(labelText: t(context, 'drivingDetails.trip'), errorText: _tripError),
+                  maxLength: 300,
+                  onChanged: (_) => setState(() => _tripError = null),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _kmController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(labelText: t(context, 'drivingDetails.km'), errorText: _kmError),
+                  onChanged: (_) => setState(() => _kmError = null),
+                ),
+                const SizedBox(height: 24),
+                FilledButton(onPressed: _save, child: Text(t(context, 'common.save'))),
+              ],
+            ),
+          );
         },
-      ),
-    );
-  }
-
-  Widget _buildSaveProgress(BuildContext context) {
-    final label = saveXlsxPhaseLabel(context, _savePhase);
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const CircularProgressIndicator(),
-          if (label != null) ...[
-            const SizedBox(height: 16),
-            Text(label),
-          ],
-        ],
       ),
     );
   }

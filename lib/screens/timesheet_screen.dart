@@ -5,6 +5,7 @@ import '../models/payroll_period.dart';
 import '../services/period_file_manager.dart';
 import '../services/safe_xlsx_write.dart';
 import '../utils/time_format.dart';
+import '../widgets/save_progress_overlay.dart';
 import '../xlsx/timesheet_engine.dart';
 
 /// Timesheet day list + per-day edit (section 10). Shows the auto-filled
@@ -22,13 +23,18 @@ class TimesheetScreen extends StatefulWidget {
 class _TimesheetScreenState extends State<TimesheetScreen> {
   late Future<void> _loadFuture;
   TimesheetSummary? _summary;
-  bool _busy = false;
-  SaveXlsxPhase? _savePhase;
+  final _progress = SaveProgressController();
 
   @override
   void initState() {
     super.initState();
     _loadFuture = _load();
+  }
+
+  @override
+  void dispose() {
+    _progress.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -38,39 +44,34 @@ class _TimesheetScreenState extends State<TimesheetScreen> {
   }
 
   Future<void> _openDay(int row, DateTime date) async {
-    if (_busy) return; // guards against a second tap starting a concurrent write
+    if (_progress.busy) return; // guards against a second tap starting a concurrent write
     final existing = _summary!.daysByRow[row - TimesheetEngine.firstDayRow];
     final result = await Navigator.of(context).push<_DayEditResult>(
       MaterialPageRoute(builder: (context) => _EditDayScreen(date: date, initial: existing)),
     );
     if (result == null) return; // cancelled -- distinct from an explicit "clear the day"
+    if (!mounted) return;
 
-    setState(() {
-      _busy = true;
-      _savePhase = SaveXlsxPhase.reading;
-    });
-    try {
-      final fileManager = PeriodFileManager();
-      final file = await fileManager.timesheetFile(widget.period);
-      void onPhase(SaveXlsxPhase phase) {
-        if (mounted) setState(() => _savePhase = phase);
-      }
-
-      switch (result) {
-        case _DaySaved(:final input):
-          await saveTimesheetDay(file, row: row, input: input, onPhase: onPhase);
-        case _DayCleared():
-          await clearTimesheetDay(file, row: row, onPhase: onPhase);
-      }
-      _summary = await readTimesheetSummary(file);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(t(context, 'timesheet.saveError', {'error': '$e'}))));
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    final ok = await _progress.run(
+      context,
+      (onPhase) async {
+        final fileManager = PeriodFileManager();
+        final file = await fileManager.timesheetFile(widget.period);
+        switch (result) {
+          case _DaySaved(:final input):
+            await saveTimesheetDay(file, row: row, input: input, onPhase: onPhase);
+          case _DayCleared():
+            await clearTimesheetDay(file, row: row, onPhase: onPhase);
+        }
+        _summary = await readTimesheetSummary(file);
+      },
+      messageFor: (e) => (title: null, message: t(context, 'timesheet.saveError', {'error': '$e'})),
+      successMessage: t(context, 'common.saved'),
+    );
+    // _summary was already refreshed inside the action above on success --
+    // this just triggers the rebuild to show it (the overlay's own
+    // controller listener doesn't know about this screen's separate state).
+    if (ok && mounted) setState(() {});
   }
 
   @override
@@ -86,63 +87,36 @@ class _TimesheetScreenState extends State<TimesheetScreen> {
           final summary = _summary!;
           final totalDays = widget.period.end.difference(widget.period.start).inDays + 1;
 
-          return Stack(
-            children: [
-              AbsorbPointer(
-                absorbing: _busy,
-                child: ListView.builder(
-                  itemCount: totalDays + 1,
-                  itemBuilder: (context, index) {
-                    if (index == totalDays) {
-                      return ListTile(
-                        title:
-                            Text(t(context, 'timesheet.totalHrs'), style: const TextStyle(fontWeight: FontWeight.bold)),
-                        trailing: Text(summary.totalHours.toStringAsFixed(2)),
-                      );
-                    }
-                    final row = TimesheetEngine.firstDayRow + index;
-                    final date = widget.period.start.add(Duration(days: index));
-                    final hours = summary.hoursByRow[index];
-                    final isWeekend = date.weekday == DateTime.saturday || date.weekday == DateTime.sunday;
-                    final isStat = widget.period.isStatHoliday(date);
-                    final dateFmt = formatDate(date);
+          return SaveProgressOverlay(
+            controller: _progress,
+            child: ListView.builder(
+              itemCount: totalDays + 1,
+              itemBuilder: (context, index) {
+                if (index == totalDays) {
+                  return ListTile(
+                    title: Text(t(context, 'timesheet.totalHrs'), style: const TextStyle(fontWeight: FontWeight.bold)),
+                    trailing: Text(summary.totalHours.toStringAsFixed(2)),
+                  );
+                }
+                final row = TimesheetEngine.firstDayRow + index;
+                final date = widget.period.start.add(Duration(days: index));
+                final hours = summary.hoursByRow[index];
+                final isWeekend = date.weekday == DateTime.saturday || date.weekday == DateTime.sunday;
+                final isStat = widget.period.isStatHoliday(date);
+                final dateFmt = formatDate(date);
 
-                    return ListTile(
-                      title: Text(dateFmt),
-                      subtitle: isStat
-                          ? Text(t(context, 'timesheet.statHoliday'))
-                          : (isWeekend ? Text(t(context, 'timesheet.weekend')) : null),
-                      trailing: Text(hours != null ? '${hours.toStringAsFixed(2)}h' : '—'),
-                      onTap: () => _openDay(row, date),
-                    );
-                  },
-                ),
-              ),
-              if (_busy) _buildSaveProgressOverlay(context),
-            ],
+                return ListTile(
+                  title: Text(dateFmt),
+                  subtitle: isStat
+                      ? Text(t(context, 'timesheet.statHoliday'))
+                      : (isWeekend ? Text(t(context, 'timesheet.weekend')) : null),
+                  trailing: Text(hours != null ? '${hours.toStringAsFixed(2)}h' : '—'),
+                  onTap: () => _openDay(row, date),
+                );
+              },
+            ),
           );
         },
-      ),
-    );
-  }
-
-  Widget _buildSaveProgressOverlay(BuildContext context) {
-    final label = saveXlsxPhaseLabel(context, _savePhase);
-    return Positioned.fill(
-      child: ColoredBox(
-        color: Theme.of(context).scaffoldBackgroundColor.withValues(alpha: 0.85),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(),
-              if (label != null) ...[
-                const SizedBox(height: 16),
-                Text(label),
-              ],
-            ],
-          ),
-        ),
       ),
     );
   }
