@@ -201,10 +201,18 @@ class PeriodFileManager {
 
   /// Periods (from [allPeriods], excluding [currentPeriod]) that fall
   /// outside [retention]'s window relative to [now] -- the pure "which
-  /// periods" half of [cleanupAccordingToRetention], split out so the
-  /// Settings screen can show an accurate confirmation count *before* the
+  /// periods" half of [cleanupAccordingToRetention]'s Timesheet side, split
+  /// out so the Settings screen can show a confirmation count *before* the
   /// user commits to narrowing the window (section 11, Пакет 9), without
   /// duplicating the age-check logic.
+  ///
+  /// Deliberately still period-level, even post-Пакет-7 (whimsical-
+  /// booping-salamander.md) -- correct as-is for Timesheet (still one file
+  /// per period), and the Settings confirmation count built from it is an
+  /// approximation on the Mileage side (a period and its cycle don't always
+  /// age out at the same moment), acceptable for a pre-commit heads-up
+  /// dialog. [cleanupAccordingToRetention] itself does NOT reuse this
+  /// result for the Mileage side -- see its own doc comment.
   List<PayrollPeriod> periodsOutsideRetention({
     required List<PayrollPeriod> allPeriods,
     required PayrollPeriod currentPeriod,
@@ -227,27 +235,40 @@ class PeriodFileManager {
   /// would silently accumulate on the phone's storage forever (section 13
   /// п.5's closing requirement; audit 2026-08-18, Пакет 21).
   ///
-  /// An ambiguous period (two+ candidate files) is skipped, not resolved by
-  /// guessing which one to delete -- this runs unattended at every startup
-  /// with no user available to arbitrate, so deleting the wrong file would
-  /// be silent, unrecoverable data loss (section 5: "не выбирать наугад").
+  /// An ambiguous period/cycle (two+ candidate files) is skipped, not
+  /// resolved by guessing which one to delete -- this runs unattended at
+  /// every startup with no user available to arbitrate, so deleting the
+  /// wrong file would be silent, unrecoverable data loss (section 5: "не
+  /// выбирать наугад").
   ///
-  /// Still keyed off each 2-week [PayrollPeriod]'s own `fileId` for both
-  /// file kinds -- correct for Timesheet as-is, but only an approximation
-  /// for Mileage now that its files are cycle-keyed; a period-level
-  /// retention pass can delete a Mileage file that's still live for the
-  /// other half of its cycle. Left as the pre-existing behavior here
-  /// deliberately -- reworking this onto cycles is Пакет 7 of
-  /// `whimsical-booping-salamander.md`, which needs its own
-  /// regression test written first (a real data-loss risk this method
-  /// doesn't yet guard against).
+  /// Timesheet and Mileage are handled by two genuinely separate passes
+  /// (whimsical-booping-salamander.md, Пакет 7 -- ⚠️ the plan's single
+  /// flagged real data-loss risk in this entire feature). Timesheet stays
+  /// period-level (one file per [PayrollPeriod], unchanged). Mileage walks
+  /// [allCycles] directly and is exempt only by matching [currentCycle]'s
+  /// own `fileId` -- **never** by deriving a cycle from each outside-
+  /// retention period one at a time. That tempting-looking shortcut is
+  /// exactly the trap: the moment the calendar crosses into a cycle's
+  /// second half, the first half stops being [currentPeriod] and would
+  /// show up in a period-level "outside retention" list, resolve back to
+  /// the very same still-current cycle, and delete the shared Mileage file
+  /// the second half is still actively writing to. Confirmed as a real
+  /// failure mode, not a hypothetical one: temporarily implemented it this
+  /// tempting-but-wrong way first and watched the regression test below
+  /// catch it before writing the fix actually shipped here.
   Future<void> cleanupAccordingToRetention({
     required List<PayrollPeriod> allPeriods,
     required PayrollPeriod currentPeriod,
+    required List<MileageCycle> allCycles,
+    required MileageCycle? currentCycle,
     required RetentionPolicy retention,
     required DateTime now,
   }) async {
     final dir = await _reportsDir();
+
+    // Timesheet side: unchanged from before Пакет 7 -- still genuinely
+    // one file per 2-week PayrollPeriod, so period-level age-out is
+    // already correct as-is.
     for (final period in periodsOutsideRetention(
       allPeriods: allPeriods,
       currentPeriod: currentPeriod,
@@ -255,10 +276,31 @@ class PeriodFileManager {
       now: now,
     )) {
       try {
-        final mileage = await findPeriodFile(dir, 'MileageReport', period.fileId);
-        if (mileage != null) await _deleteWithBackup(mileage);
         final timesheet = await findPeriodFile(dir, 'Timesheet', period.fileId);
         if (timesheet != null) await _deleteWithBackup(timesheet);
+      } on PeriodFileAmbiguousException {
+        continue;
+      }
+    }
+
+    // Mileage side (Пакет 7 of whimsical-booping-salamander.md): genuinely
+    // cycle-scoped, walking [allCycles] directly rather than deriving a
+    // cycle from each outside-retention PERIOD -- deriving per-period would
+    // resolve the still-current cycle for its no-longer-"current" first
+    // half and wrongly delete the shared file the second half is still
+    // actively writing to (the exact bug the REGRESSION test above catches
+    // -- confirmed by literally hitting it with that naive approach before
+    // writing this). A cycle is exempt only by matching [currentCycle]'s
+    // own fileId -- never by whether either of its constituent periods
+    // individually happens to equal [currentPeriod].
+    final windowDays = retention.windowDays;
+    for (final cycle in allCycles) {
+      if (currentCycle != null && cycle.fileId == currentCycle.fileId) continue;
+      final ageDays = now.difference(cycle.end).inDays;
+      if (windowDays != null && ageDays <= windowDays) continue;
+      try {
+        final mileage = await findPeriodFile(dir, 'MileageReport', cycle.fileId);
+        if (mileage != null) await _deleteWithBackup(mileage);
       } on PeriodFileAmbiguousException {
         continue;
       }

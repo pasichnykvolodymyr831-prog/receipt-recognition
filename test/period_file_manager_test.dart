@@ -463,7 +463,9 @@ void main() {
     });
   });
 
-  group('cleanupAccordingToRetention (Пакет 21: backup deletion, audit 2026-08-18)', () {
+  group('cleanupAccordingToRetention (Пакет 21: backup deletion, audit 2026-08-18; reworked onto '
+      'cycles for Mileage in Пакет 7 of whimsical-booping-salamander.md -- ⚠️ the plan\'s single '
+      'flagged real data-loss risk in this whole feature)', () {
     late Directory docsDir;
     late Directory reportsDir;
     late Directory backupsDir;
@@ -479,11 +481,31 @@ void main() {
       docsDir.deleteSync(recursive: true);
     });
 
+    // An old, fully-aged-out cycle -- both halves are old enough that
+    // neither could ever be "current".
+    final oldFirstHalf = PayrollPeriod(
+      key: 'old-first',
+      start: DateTime(2019, 12, 24),
+      end: DateTime(2020, 1, 8),
+      due: DateTime(2020, 1, 6),
+    );
     final oldPeriod = PayrollPeriod(
       key: 'old',
       start: DateTime(2020, 1, 9),
       end: DateTime(2020, 1, 23),
       due: DateTime(2020, 1, 21),
+    );
+    final oldCycle = MileageCycle(firstHalf: oldFirstHalf, secondHalf: oldPeriod);
+
+    // The cycle that's live "today" (2026-08-20) -- currentPeriod is its
+    // SECOND half, exactly the scenario the plan's regression test targets:
+    // firstHalf is no longer literally "current" once the calendar crosses
+    // into the second half, but the cycle's shared Mileage file still is.
+    final firstHalf = PayrollPeriod(
+      key: 'first-half',
+      start: DateTime(2026, 7, 24),
+      end: DateTime(2026, 8, 8),
+      due: DateTime(2026, 8, 6),
     );
     final currentPeriod = PayrollPeriod(
       key: 'current',
@@ -491,88 +513,179 @@ void main() {
       end: DateTime(2026, 8, 23),
       due: DateTime(2026, 8, 21),
     );
+    final currentCycle = MileageCycle(firstHalf: firstHalf, secondHalf: currentPeriod);
 
     void writeReportAndBackup(String kind, String fileId) {
       File('${reportsDir.path}/${kind}_$fileId.xlsx').writeAsBytesSync([1]);
       File('${backupsDir.path}/${kind}_$fileId.xlsx.bak').writeAsBytesSync([1]);
     }
 
-    test('deletes both the report file and its .bak when a period falls outside the retention window', () async {
-      writeReportAndBackup('MileageReport', oldPeriod.fileId);
+    test(
+        '⚠️ REGRESSION (Пакет 7\'s whole reason to exist): when the current period is a cycle\'s SECOND '
+        'half, the cycle\'s shared Mileage file survives retention=never even though the FIRST half is '
+        'no longer literally "current" -- the first half\'s own Timesheet is still cleaned up normally, '
+        'proving the Mileage side is genuinely cycle-scoped, not silently piggy-backing on period identity',
+        () async {
+      writeReportAndBackup('MileageReport', currentCycle.fileId); // the one shared file
+      writeReportAndBackup('Timesheet', firstHalf.fileId);
+      writeReportAndBackup('Timesheet', currentPeriod.fileId);
+
+      await PeriodFileManager().cleanupAccordingToRetention(
+        allPeriods: [firstHalf, currentPeriod],
+        currentPeriod: currentPeriod, // current = the cycle's SECOND half
+        allCycles: [currentCycle],
+        currentCycle: currentCycle,
+        retention: RetentionPolicy.never,
+        now: DateTime(2026, 8, 20),
+      );
+
+      expect(File('${reportsDir.path}/MileageReport_${currentCycle.fileId}.xlsx').existsSync(), true,
+          reason: 'the cycle is still current (via its second half) -- must survive, live data at risk otherwise');
+      expect(File('${backupsDir.path}/MileageReport_${currentCycle.fileId}.xlsx.bak').existsSync(), true);
+      expect(File('${reportsDir.path}/Timesheet_${firstHalf.fileId}.xlsx').existsSync(), false,
+          reason: 'the first half is no longer "current" at the period level -- its own Timesheet '
+              'must still age out exactly as before, unaffected by the cycle-level Mileage change');
+      expect(File('${reportsDir.path}/Timesheet_${currentPeriod.fileId}.xlsx').existsSync(), true,
+          reason: 'currentPeriod itself is still excluded on the Timesheet side too');
+    });
+
+    test('a non-current cycle\'s Mileage file (and its .bak) is deleted once it ages out', () async {
+      writeReportAndBackup('MileageReport', oldCycle.fileId);
+
+      await PeriodFileManager().cleanupAccordingToRetention(
+        allPeriods: [oldFirstHalf, oldPeriod, firstHalf, currentPeriod],
+        currentPeriod: currentPeriod,
+        allCycles: [oldCycle, currentCycle],
+        currentCycle: currentCycle,
+        retention: RetentionPolicy.oneMonth,
+        now: DateTime(2026, 8, 20),
+      );
+
+      expect(File('${reportsDir.path}/MileageReport_${oldCycle.fileId}.xlsx').existsSync(), false);
+      expect(File('${backupsDir.path}/MileageReport_${oldCycle.fileId}.xlsx.bak').existsSync(), false,
+          reason: 'the backup must be deleted alongside the report file, not left to accumulate forever');
+    });
+
+    test('deletes both the report file and its .bak when a period falls outside the retention window '
+        '(Timesheet side, unchanged from before Пакет 7)', () async {
       writeReportAndBackup('Timesheet', oldPeriod.fileId);
 
       await PeriodFileManager().cleanupAccordingToRetention(
         allPeriods: [oldPeriod, currentPeriod],
         currentPeriod: currentPeriod,
+        allCycles: const [],
+        currentCycle: null,
         retention: RetentionPolicy.oneMonth,
         now: DateTime(2026, 8, 20),
       );
 
-      expect(File('${reportsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx').existsSync(), false);
-      expect(File('${backupsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx.bak').existsSync(), false,
-          reason: 'the backup must be deleted alongside the report file, not left to accumulate forever');
       expect(File('${reportsDir.path}/Timesheet_${oldPeriod.fileId}.xlsx').existsSync(), false);
       expect(File('${backupsDir.path}/Timesheet_${oldPeriod.fileId}.xlsx.bak').existsSync(), false);
     });
 
-    test('leaves the current period\'s files and backups untouched', () async {
-      writeReportAndBackup('MileageReport', currentPeriod.fileId);
+    test('leaves the current period\'s Timesheet and the current cycle\'s Mileage file untouched', () async {
+      writeReportAndBackup('MileageReport', currentCycle.fileId);
       writeReportAndBackup('Timesheet', currentPeriod.fileId);
 
       await PeriodFileManager().cleanupAccordingToRetention(
-        allPeriods: [currentPeriod],
+        allPeriods: [firstHalf, currentPeriod],
         currentPeriod: currentPeriod,
+        allCycles: [currentCycle],
+        currentCycle: currentCycle,
         retention: RetentionPolicy.never,
         now: DateTime(2026, 8, 20),
       );
 
-      expect(File('${reportsDir.path}/MileageReport_${currentPeriod.fileId}.xlsx').existsSync(), true);
-      expect(File('${backupsDir.path}/MileageReport_${currentPeriod.fileId}.xlsx.bak').existsSync(), true);
+      expect(File('${reportsDir.path}/MileageReport_${currentCycle.fileId}.xlsx').existsSync(), true);
+      expect(File('${backupsDir.path}/MileageReport_${currentCycle.fileId}.xlsx.bak').existsSync(), true);
+      expect(File('${reportsDir.path}/Timesheet_${currentPeriod.fileId}.xlsx').existsSync(), true);
     });
 
-    test('a report file with no backup on disk is still deleted cleanly (backup deletion is best-effort)', () async {
-      File('${reportsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx').writeAsBytesSync([1]);
+    test('a cycle Mileage report file with no backup on disk is still deleted cleanly (best-effort)', () async {
+      File('${reportsDir.path}/MileageReport_${oldCycle.fileId}.xlsx').writeAsBytesSync([1]);
+
+      await PeriodFileManager().cleanupAccordingToRetention(
+        allPeriods: [oldFirstHalf, oldPeriod, firstHalf, currentPeriod],
+        currentPeriod: currentPeriod,
+        allCycles: [oldCycle, currentCycle],
+        currentCycle: currentCycle,
+        retention: RetentionPolicy.oneMonth,
+        now: DateTime(2026, 8, 20),
+      );
+
+      expect(File('${reportsDir.path}/MileageReport_${oldCycle.fileId}.xlsx').existsSync(), false);
+    });
+
+    test('an ambiguous cycle Mileage file is skipped entirely -- its backup is not touched either', () async {
+      File('${reportsDir.path}/MileageReport_${oldCycle.fileId}.xlsx').writeAsBytesSync([1]);
+      File('${reportsDir.path}/Prefix_MileageReport_${oldCycle.fileId}.xlsx').writeAsBytesSync([1]);
+      File('${backupsDir.path}/MileageReport_${oldCycle.fileId}.xlsx.bak').writeAsBytesSync([1]);
+
+      await PeriodFileManager().cleanupAccordingToRetention(
+        allPeriods: [oldFirstHalf, oldPeriod, firstHalf, currentPeriod],
+        currentPeriod: currentPeriod,
+        allCycles: [oldCycle, currentCycle],
+        currentCycle: currentCycle,
+        retention: RetentionPolicy.oneMonth,
+        now: DateTime(2026, 8, 20),
+      );
+
+      expect(File('${reportsDir.path}/MileageReport_${oldCycle.fileId}.xlsx').existsSync(), true);
+      expect(File('${reportsDir.path}/Prefix_MileageReport_${oldCycle.fileId}.xlsx').existsSync(), true);
+      expect(File('${backupsDir.path}/MileageReport_${oldCycle.fileId}.xlsx.bak').existsSync(), true);
+    });
+
+    test('an ambiguous period is skipped on the Timesheet side too -- its backup is not touched either', () async {
       File('${reportsDir.path}/Timesheet_${oldPeriod.fileId}.xlsx').writeAsBytesSync([1]);
+      File('${reportsDir.path}/Prefix_Timesheet_${oldPeriod.fileId}.xlsx').writeAsBytesSync([1]);
+      File('${backupsDir.path}/Timesheet_${oldPeriod.fileId}.xlsx.bak').writeAsBytesSync([1]);
 
       await PeriodFileManager().cleanupAccordingToRetention(
         allPeriods: [oldPeriod, currentPeriod],
         currentPeriod: currentPeriod,
+        allCycles: const [],
+        currentCycle: null,
         retention: RetentionPolicy.oneMonth,
         now: DateTime(2026, 8, 20),
       );
 
-      expect(File('${reportsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx').existsSync(), false);
+      expect(File('${reportsDir.path}/Timesheet_${oldPeriod.fileId}.xlsx').existsSync(), true);
+      expect(File('${reportsDir.path}/Prefix_Timesheet_${oldPeriod.fileId}.xlsx').existsSync(), true);
+      expect(File('${backupsDir.path}/Timesheet_${oldPeriod.fileId}.xlsx.bak').existsSync(), true);
     });
 
-    test('an ambiguous period is skipped entirely -- its backup is not touched either', () async {
-      File('${reportsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx').writeAsBytesSync([1]);
-      File('${reportsDir.path}/Prefix_MileageReport_${oldPeriod.fileId}.xlsx').writeAsBytesSync([1]);
-      File('${backupsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx.bak').writeAsBytesSync([1]);
-
-      await PeriodFileManager().cleanupAccordingToRetention(
-        allPeriods: [oldPeriod, currentPeriod],
-        currentPeriod: currentPeriod,
-        retention: RetentionPolicy.oneMonth,
-        now: DateTime(2026, 8, 20),
-      );
-
-      expect(File('${reportsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx').existsSync(), true);
-      expect(File('${reportsDir.path}/Prefix_MileageReport_${oldPeriod.fileId}.xlsx').existsSync(), true);
-      expect(File('${backupsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx.bak').existsSync(), true);
-    });
-
-    test('injecting a custom BackupManager is honored (constructor wiring)', () async {
-      writeReportAndBackup('MileageReport', oldPeriod.fileId);
+    test('injecting a custom BackupManager is honored (constructor wiring), both sides', () async {
+      writeReportAndBackup('MileageReport', oldCycle.fileId);
+      writeReportAndBackup('Timesheet', oldPeriod.fileId);
       final manager = PeriodFileManager(backupManager: BackupManager());
 
       await manager.cleanupAccordingToRetention(
-        allPeriods: [oldPeriod, currentPeriod],
+        allPeriods: [oldFirstHalf, oldPeriod, firstHalf, currentPeriod],
         currentPeriod: currentPeriod,
+        allCycles: [oldCycle, currentCycle],
+        currentCycle: currentCycle,
         retention: RetentionPolicy.oneMonth,
         now: DateTime(2026, 8, 20),
       );
 
-      expect(File('${backupsDir.path}/MileageReport_${oldPeriod.fileId}.xlsx.bak').existsSync(), false);
+      expect(File('${backupsDir.path}/MileageReport_${oldCycle.fileId}.xlsx.bak').existsSync(), false);
+      expect(File('${backupsDir.path}/Timesheet_${oldPeriod.fileId}.xlsx.bak').existsSync(), false);
+    });
+
+    test('a `never` policy deletes every non-current cycle\'s Mileage file, mirroring the Timesheet side',
+        () async {
+      writeReportAndBackup('MileageReport', oldCycle.fileId);
+
+      await PeriodFileManager().cleanupAccordingToRetention(
+        allPeriods: [oldFirstHalf, oldPeriod, firstHalf, currentPeriod],
+        currentPeriod: currentPeriod,
+        allCycles: [oldCycle, currentCycle],
+        currentCycle: currentCycle,
+        retention: RetentionPolicy.never,
+        now: DateTime(2026, 8, 20),
+      );
+
+      expect(File('${reportsDir.path}/MileageReport_${oldCycle.fileId}.xlsx').existsSync(), false);
     });
   });
 }

@@ -196,6 +196,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await fileManager.cleanupAccordingToRetention(
         allPeriods: periods,
         currentPeriod: current,
+        allCycles: periodRepo.mileageCycles(periods),
+        currentCycle: periodRepo.mileageCycleFor(current, periods),
         retention: newValue,
         now: DateTime.now(),
       );

@@ -87,6 +87,8 @@ class AppStartupService {
     await fileManager.cleanupAccordingToRetention(
       allPeriods: allPeriods,
       currentPeriod: period,
+      allCycles: periodRepo.mileageCycles(allPeriods),
+      currentCycle: cycle,
       retention: settings.retention,
       now: DateTime.now(),
     );
