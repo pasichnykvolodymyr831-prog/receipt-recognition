@@ -14,7 +14,9 @@ import 'package:expenseflow/models/mileage_cycle.dart';
 import 'package:expenseflow/models/payroll_period.dart';
 import 'package:expenseflow/services/backup_manager.dart';
 import 'package:expenseflow/services/period_file_manager.dart';
+import 'package:expenseflow/services/safe_xlsx_write.dart';
 import 'package:expenseflow/services/settings_repository.dart';
+import 'package:expenseflow/xlsx/mileage_report_engine.dart' show ReceiptInput;
 import 'package:expenseflow/xlsx/xlsx_rels_compat.dart';
 
 class _FakePathProviderPlatform extends PathProviderPlatform {
@@ -268,19 +270,55 @@ void main() {
       docsDir.deleteSync(recursive: true);
     });
 
-    test('renames a legacy file keyed by the SECOND half\'s own fileId to the cycle fileId, preserving its bytes',
-        () async {
-      final legacy = File('${reportsDir.path}/Truman_MileageReport_${period.fileId}.xlsx');
-      const realData = [9, 9, 9, 9]; // stand-in for a real receipt/trip the user already entered.
-      legacy.writeAsBytesSync(realData);
+    // A real (not placeholder-bytes) legacy file -- needed since migration
+    // now also rewrites M3 in place (updateMileagePeriodLabel), which
+    // genuinely decodes the file as xlsx; a fake byte array would fail
+    // with a FormatException instead of testing anything real. Built via
+    // the real createMileagePeriod (not a raw template copy) so row 8 is
+    // genuinely initialized as the Kilometers row, exactly how a pre-cycle
+    // build's own file actually came to exist -- a raw template copy alone
+    // fails saveMileageReceipt below with "No Kilometers row found".
+    Future<File> realLegacyFile(String path) async {
+      final file = File(path);
+      await createMileagePeriod(
+        file,
+        periodLabel: 'Aug 9 - Aug 23, 2026', // stand-in for the stale pre-cycle 2-week label
+        employeeName: 'Truman Homes',
+        periodEnd: DateTime(2026, 8, 23),
+        kmRate: 0.56,
+      );
+      // A real receipt, so "survives migration" is actually checked, not
+      // just "the file still opens".
+      await saveMileageReceipt(
+        file,
+        const ReceiptInput(description: 'Real receipt', subtotal: 10, gst: 0.5),
+        periodKmRate: 0.56,
+        settingsDefaultRate: 0.56,
+      );
+      return file;
+    }
+
+    test(
+        'renames a legacy file keyed by the SECOND half\'s own fileId to the cycle fileId, real data '
+        'survives, M3 updated to the whole-cycle label', () async {
+      await realLegacyFile('${reportsDir.path}/Truman_MileageReport_${period.fileId}.xlsx');
 
       await PeriodFileManager().ensureMileageFileExists(cycle, AppSettings.defaults.copyWith(firstName: 'Truman'));
 
       final entries = reportsDir.listSync().map((e) => e.uri.pathSegments.last).toList();
       expect(entries, ['Truman_MileageReport_${cycle.fileId}.xlsx'],
           reason: 'the legacy file must be renamed in place, not left behind alongside a fresh blank one');
-      expect(File('${reportsDir.path}/Truman_MileageReport_${cycle.fileId}.xlsx').readAsBytesSync(), realData,
-          reason: 'the real data must survive the rename byte-for-byte');
+
+      final migratedFile = File('${reportsDir.path}/Truman_MileageReport_${cycle.fileId}.xlsx');
+      final summary = await readMileageReportSummary(migratedFile);
+      expect(summary.receipts, hasLength(1), reason: 'the real receipt must survive migration');
+      expect(summary.receipts.single.description, 'Real receipt');
+
+      final excel = Excel.decodeBytes(normalizeXlsxRelationshipTargets(migratedFile.readAsBytesSync()));
+      expect(excel.sheets['Truman Homes']!.cell(CellIndex.indexByString('M3')).value.toString(),
+          contains(cycleLabel(cycle)),
+          reason: 'M3 must be updated to the whole-cycle label -- the rename alone leaves it stale at '
+              'whichever constituent period\'s own 2-week label was there before');
     });
 
     // AppSettings.defaults.firstName is 'Truman' (the app's real shipped
@@ -290,19 +328,20 @@ void main() {
     final noPrefix = AppSettings.defaults.copyWith(firstName: '');
 
     test('renames a legacy file keyed by the FIRST half\'s own fileId to the cycle fileId', () async {
-      final legacy = File('${reportsDir.path}/MileageReport_${firstHalf.fileId}.xlsx');
-      const realData = [7, 7, 7];
-      legacy.writeAsBytesSync(realData);
+      await realLegacyFile('${reportsDir.path}/MileageReport_${firstHalf.fileId}.xlsx');
 
       await PeriodFileManager().ensureMileageFileExists(cycle, noPrefix);
 
       final entries = reportsDir.listSync().map((e) => e.uri.pathSegments.last).toList();
       expect(entries, ['MileageReport_${cycle.fileId}.xlsx']);
-      expect(File('${reportsDir.path}/MileageReport_${cycle.fileId}.xlsx').readAsBytesSync(), realData);
+      final summary = await readMileageReportSummary(File('${reportsDir.path}/MileageReport_${cycle.fileId}.xlsx'));
+      expect(summary.receipts, hasLength(1));
     });
 
     test('migrates the file\'s .bak alongside it, so the next write does not orphan a stale backup', () async {
-      File('${reportsDir.path}/Truman_MileageReport_${period.fileId}.xlsx').writeAsBytesSync([1, 2, 3]);
+      await realLegacyFile('${reportsDir.path}/Truman_MileageReport_${period.fileId}.xlsx');
+      // The .bak itself is never parsed as xlsx by the migration (only
+      // renamed) -- placeholder bytes are fine here.
       final legacyBackup = File('${backupsDir.path}/Truman_MileageReport_${period.fileId}.xlsx.bak')
         ..writeAsBytesSync([4, 5, 6]);
 
@@ -314,7 +353,7 @@ void main() {
 
     test('a legacy file with no backup on disk is still migrated cleanly (backup migration is best-effort)',
         () async {
-      File('${reportsDir.path}/MileageReport_${period.fileId}.xlsx').writeAsBytesSync([1]);
+      await realLegacyFile('${reportsDir.path}/MileageReport_${period.fileId}.xlsx');
 
       await PeriodFileManager().ensureMileageFileExists(cycle, noPrefix);
 

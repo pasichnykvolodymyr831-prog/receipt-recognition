@@ -72,11 +72,19 @@ class _DrivingDetailsScreenState extends State<DrivingDetailsScreen> {
   }
 
   Future<void> _pickDate() async {
+    // Already resolved (and non-null -- the screen is gated on it in
+    // build()) by the time the date picker is reachable; awaiting the same
+    // Future again just returns the cached result, no re-resolve. Bounded
+    // by the whole CYCLE's range (not just widget.period's own 2 weeks) --
+    // Driving Details entries all land in the one shared Mileage file, so a
+    // trip on any day of either half is legitimate here.
+    final cycle = (await _cycleFuture)!;
+    if (!mounted) return;
     final picked = await showDatePicker(
       context: context,
       initialDate: _date,
-      firstDate: widget.period.start,
-      lastDate: widget.period.end,
+      firstDate: cycle.start,
+      lastDate: cycle.end,
     );
     if (!mounted) return;
     if (picked != null) setState(() => _date = picked);

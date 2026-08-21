@@ -171,6 +171,11 @@ class _UpdateMileageHeaderOp extends _MileageOp {
   const _UpdateMileageHeaderOp(this.employeeName);
 }
 
+class _UpdatePeriodLabelOp extends _MileageOp {
+  final String periodLabel;
+  const _UpdatePeriodLabelOp(this.periodLabel);
+}
+
 class _UpdateDrivingDetailOp extends _MileageOp {
   final int row;
   final DateTime date;
@@ -235,6 +240,8 @@ void _mileageIsolateEntry(_MileageRequest req) {
         engine.updateReceipt(o.row, o.receipt);
       case _UpdateMileageHeaderOp o:
         engine.updateEmployeeName(o.employeeName);
+      case _UpdatePeriodLabelOp o:
+        engine.updatePeriodLabel(o.periodLabel);
       case _UpdateDrivingDetailOp o:
         engine.updateDrivingDetail(
           o.row,
@@ -475,6 +482,32 @@ Future<void> updateMileageEmployeeName(
     onPhase: onPhase,
   );
   await logStyleWarnings('updateMileageEmployeeName', file.uri.pathSegments.last, result.styleWarnings);
+  await _atomicWrite(file, result.bytes);
+}
+
+/// Rewrites M3 (period label) on [file] in place -- whimsical-booping-
+/// salamander.md, Пакет 2 follow-up: used once, right after
+/// [PeriodFileManager] migrates a pre-cycle-build Mileage file to its new
+/// cycle-keyed name, to replace the stale 2-week label the rename alone
+/// left behind. Doesn't touch B3 (employee name) or any data row.
+Future<void> updateMileagePeriodLabel(
+  File file, {
+  required String periodLabel,
+  void Function(SaveXlsxPhase)? onPhase,
+  BackupManager? backupManager,
+}) async {
+  onPhase?.call(SaveXlsxPhase.reading);
+  final sourceBytes = await file.readAsBytes();
+  final templateBytes = await _mileageTemplateBytes();
+  await (backupManager ?? _backupManager).backupBeforeWrite(file);
+  final result = await _runMileageIsolate(
+    sourceBytes: sourceBytes,
+    templateBytes: templateBytes,
+    healHiddenSheets: false,
+    op: _UpdatePeriodLabelOp(periodLabel),
+    onPhase: onPhase,
+  );
+  await logStyleWarnings('updateMileagePeriodLabel', file.uri.pathSegments.last, result.styleWarnings);
   await _atomicWrite(file, result.bytes);
 }
 

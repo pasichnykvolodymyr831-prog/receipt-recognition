@@ -160,6 +160,18 @@ class MileageReportEngine {
     setCellValue(_sheet, 'B3', TextCellValue(employeeName));
   }
 
+  /// Rewrites just M3 (period label) on an already-existing file --
+  /// whimsical-booping-salamander.md, Пакет 2 follow-up: a Mileage file
+  /// migrated in place from a pre-cycle build (renamed to the cycle's
+  /// fileId by [PeriodFileManager._migrateLegacyMileageFile]) still carries
+  /// its ORIGINAL 2-week `periodLabel` in M3 -- the rename alone doesn't
+  /// touch file content, so M3 goes stale the moment the file starts
+  /// representing the whole 4-week cycle instead. Doesn't touch B3
+  /// (employee name), mirroring [updateEmployeeName]'s narrow scope.
+  void updatePeriodLabel(String periodLabel) {
+    setCellValue(_sheet, 'M3', TextCellValue(periodLabel));
+  }
+
   /// Initializes row 8 as the Kilometers row on a freshly created period
   /// file, before any receipts exist (section 7, "Инициализация нового
   /// периода"). Must be called AFTER [writeRate] -- not because E8 (always

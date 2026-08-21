@@ -188,6 +188,13 @@ class PeriodFileManager {
     final migratedFile = File('${dir.path}/${namePrefix}MileageReport_${cycle.fileId}.xlsx');
     await legacy.rename(migratedFile.path);
 
+    // The rename alone doesn't touch file content -- M3 still carries
+    // whichever constituent period's own 2-week label was there when the
+    // file was first created, now stale (the file represents the whole
+    // cycle from here on). Must happen after the rename above (needs the
+    // file at its final path) but is otherwise independent of it.
+    await updateMileagePeriodLabel(File(migratedFile.path), periodLabel: cycleLabel(cycle));
+
     // Best-effort: carry the file's own backup along under the new name too
     // (section 13 п.5), so the next write's backupBeforeWrite doesn't leave
     // a stale, permanently-orphaned .bak sitting under the old filename.
