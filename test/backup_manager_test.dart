@@ -5,12 +5,23 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 import 'package:expenseflow/services/backup_manager.dart';
 
 const mileageTemplatePath = 'assets/templates/Truman_Homes_Mileage_Report_TEMPLATE.xlsx';
 
+class _FakePathProviderPlatform extends PathProviderPlatform {
+  _FakePathProviderPlatform(this._docsPath);
+  final String _docsPath;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => _docsPath;
+}
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late Directory tempDir;
 
   setUp(() {
@@ -115,5 +126,82 @@ void main() {
     await BackupManager.restoreIfCorruptedUsing(target, backup);
 
     expect(await target.readAsBytes(), [1, 2, 3]);
+  });
+
+  // Fix for the Settings-exit freeze (sequential-gliding-clover.md): the
+  // instance-level restoreIfCorrupted wraps restoreIfCorruptedUsing (tested
+  // above) with a per-instance skip cache -- the full decode-based check
+  // only needs to run once per file per app process lifetime (section 13.5
+  // is about recovering a PREVIOUS session's kill-mid-write; this app's own
+  // writes are already atomic, so nothing can corrupt a file between two
+  // checks in the same continuous run).
+  group('restoreIfCorrupted (instance, session-scoped skip cache)', () {
+    late Directory docsDir;
+    late Directory targetDir;
+
+    setUp(() {
+      docsDir = Directory.systemTemp.createTempSync('backup_manager_instance_docs');
+      targetDir = Directory.systemTemp.createTempSync('backup_manager_instance_target');
+      PathProviderPlatform.instance = _FakePathProviderPlatform(docsDir.path);
+    });
+
+    tearDown(() {
+      docsDir.deleteSync(recursive: true);
+      targetDir.deleteSync(recursive: true);
+    });
+
+    test('first call on a corrupted file restores it from backup (cache does not break the existing guarantee)',
+        () async {
+      final manager = BackupManager();
+      final target = File('${targetDir.path}/MileageReport_test.xlsx');
+      final validBytes = File(mileageTemplatePath).readAsBytesSync();
+      await target.writeAsBytes([1, 2, 3, 4, 5]); // corrupted
+      final backup = await manager.backupFileFor(target);
+      await backup.create(recursive: true);
+      await backup.writeAsBytes(validBytes);
+
+      await manager.restoreIfCorrupted(target);
+
+      expect(await target.readAsBytes(), validBytes);
+    });
+
+    test('second call on the SAME instance skips the check even if the file is corrupted again afterward',
+        () async {
+      final manager = BackupManager();
+      final target = File('${targetDir.path}/MileageReport_test.xlsx');
+      final validBytes = File(mileageTemplatePath).readAsBytesSync();
+      await target.writeAsBytes(validBytes); // valid the first time
+      final backup = await manager.backupFileFor(target);
+      await backup.create(recursive: true);
+      await backup.writeAsBytes(validBytes);
+
+      await manager.restoreIfCorrupted(target); // first call: validates, caches
+
+      // Corrupt the file AFTER the first check -- a real re-check would catch
+      // this, but the whole point of the session cache is that it doesn't.
+      await target.writeAsBytes([9, 9, 9]);
+      await manager.restoreIfCorrupted(target); // second call: must be skipped
+
+      expect(await target.readAsBytes(), [9, 9, 9]);
+    });
+
+    test('a NEW instance (simulating a fresh app process) re-validates, proving the cache does not leak',
+        () async {
+      final target = File('${targetDir.path}/MileageReport_test.xlsx');
+      final validBytes = File(mileageTemplatePath).readAsBytesSync();
+      await target.writeAsBytes(validBytes);
+      final firstManager = BackupManager();
+      final backup = await firstManager.backupFileFor(target);
+      await backup.create(recursive: true);
+      await backup.writeAsBytes(validBytes);
+      await firstManager.restoreIfCorrupted(target); // validates & caches on firstManager
+
+      await target.writeAsBytes([9, 9, 9]); // corrupt after that
+
+      final freshManager = BackupManager(); // a new process would construct a new instance
+      await freshManager.restoreIfCorrupted(target);
+
+      expect(await target.readAsBytes(), validBytes);
+    });
   });
 }

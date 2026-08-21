@@ -59,7 +59,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _reload() {
-    setState(() => _future = _load());
+    setState(() {
+      _future = _load();
+    });
   }
 
   @override

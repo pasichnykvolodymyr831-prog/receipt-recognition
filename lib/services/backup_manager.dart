@@ -14,6 +14,19 @@ import '../xlsx/xlsx_rels_compat.dart';
 /// the actual backup/restore logic is factored into plain `File`-based
 /// methods below so it can be unit-tested without platform channels.
 class BackupManager {
+  // Paths already checked (and restored, if needed) in this process's
+  // lifetime. restoreIfCorrupted's job (section 13.5) is specifically
+  // recovering from a PREVIOUS session's kill-mid-write -- within one
+  // continuous run, this app's own writes are already atomic (temp file +
+  // rename, see safe_xlsx_write.dart's _atomicWrite) and nothing else
+  // touches these files, so a file validated once this session can never
+  // become newly corrupted before the next reload checks it again. A fresh
+  // process gets a fresh BackupManager (HomeScreen -- MaterialApp.home --
+  // owns the one instance restoreIfCorrupted is ever called through, for
+  // its own process lifetime), so this cache never survives a real restart,
+  // which is the only case the check still needs to run for.
+  final Set<String> _validatedThisSession = {};
+
   Future<Directory> _backupDir() async {
     final dir = await getApplicationDocumentsDirectory();
     final backups = Directory('${dir.path}/backups');
@@ -40,8 +53,10 @@ class BackupManager {
   /// it from its backup (if one exists). Call at app startup for every
   /// period file before it's read or written.
   Future<void> restoreIfCorrupted(File targetFile) async {
+    if (_validatedThisSession.contains(targetFile.path)) return;
     final backup = await backupFileFor(targetFile);
     await restoreIfCorruptedUsing(targetFile, backup);
+    _validatedThisSession.add(targetFile.path);
   }
 
   /// Normalizes `.rels` targets before attempting to decode (see
